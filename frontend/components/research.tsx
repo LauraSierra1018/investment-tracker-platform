@@ -31,9 +31,10 @@ import {
 import { api } from '@/lib/api';
 import { createClient } from '@/lib/supabase/client';
 import { StockSearch } from '@/components/stock-search';
+import { ResearchCompare } from '@/components/research-compare';
 import type { Stock } from '@/types';
 
-type ResearchTab = 'overview' | 'fundamentals' | 'valuation' | 'risk' | 'ai';
+type ResearchTab = 'overview' | 'fundamentals' | 'valuation' | 'risk' | 'compare' | 'ai';
 type ChartRange = '1D' | '5D' | '1M' | '6M' | 'YTD' | '1Y' | '5Y';
 
 type Criterion = {
@@ -90,6 +91,7 @@ const tabs: { id: ResearchTab; label: string }[] = [
   { id: 'fundamentals', label: 'Fundamentales' },
   { id: 'valuation', label: 'Valoración' },
   { id: 'risk', label: 'Riesgo' },
+  { id: 'compare', label: 'Comparar' },
   { id: 'ai', label: 'IA' },
 ];
 
@@ -360,6 +362,10 @@ export function Research() {
               criteria={filterRiskCriteria(criteria)}
               emptyMessage="Todavía no hay métricas de riesgo suficientes para este activo."
             />
+          )}
+
+          {activeTab === 'compare' && (
+            <ResearchCompare baseStock={stock} />
           )}
 
           {activeTab === 'ai' && (
