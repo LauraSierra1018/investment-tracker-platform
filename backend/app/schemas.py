@@ -48,13 +48,16 @@ class SearchResult(BaseModel):
 
 class WatchlistCreate(BaseModel):
     ticker: str
-    label: str = "Principal"
-    note: str = ""
 
-class WatchlistOut(WatchlistCreate):
+
+class WatchlistOut(BaseModel):
     id: int
+    ticker: str
     created_at: datetime
-    model_config = {"from_attributes": True}
+
+    model_config = {
+        "from_attributes": True
+    }
 
 class PositionCreate(BaseModel):
     ticker: str

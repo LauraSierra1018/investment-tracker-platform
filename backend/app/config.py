@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -8,13 +11,22 @@ ENV_FILE = BASE_DIR / ".env"
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./investment_tracker.db"
-    frontend_origin: str = "http://localhost:3000"
+    database_url: str = (
+        "sqlite:///./investment_tracker.db"
+    )
+
+    frontend_origin: str = (
+        "http://localhost:3000"
+    )
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
 
     alpha_vantage_api_key: str = ""
+
+    # Supabase
+    supabase_url: str = ""
+    supabase_publishable_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),

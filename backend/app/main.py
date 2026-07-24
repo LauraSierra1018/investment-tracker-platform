@@ -10,6 +10,10 @@ from .services.market import get_stock, search, history
 from .services.market_overview import market_overview
 from .services.ai import analyze
 from .services.search import search_assets
+from .auth import (
+    AuthUser,
+    get_current_user,
+)
 
 Base.metadata.create_all(engine)
 app=FastAPI(title="Investment Research API",version="2.0.0")
@@ -28,41 +32,327 @@ def overview(): return market_overview()
 @app.post("/ai/analyze",response_model=AiResponse)
 def ai_analysis(body:AiRequest): return analyze(body.ticker)
 
-@app.get("/watchlist",response_model=list[WatchlistOut])
-def watchlist(db:Session=Depends(get_db)): return list(db.scalars(select(WatchlistItem).order_by(WatchlistItem.created_at.desc())))
-@app.post("/watchlist",response_model=WatchlistOut)
-def add_watchlist(body:WatchlistCreate,db:Session=Depends(get_db)):
-    item=WatchlistItem(ticker=body.ticker.upper(),label=body.label,note=body.note)
-    db.add(item)
-    try: db.commit(); db.refresh(item)
-    except Exception: db.rollback(); raise HTTPException(409,"El activo ya está en esta lista")
-    return item
-@app.delete("/watchlist/{item_id}")
-def delete_watchlist(item_id:int,db:Session=Depends(get_db)):
-    item=db.get(WatchlistItem,item_id)
-    if not item: raise HTTPException(404,"No encontrado")
-    db.delete(item); db.commit(); return {"deleted":True}
+@app.get(
+    "/watchlist",
+    response_model=list[WatchlistOut],
+)
+def watchlist(
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    statement = (
+        select(WatchlistItem)
+        .where(
+            WatchlistItem.user_id
+            == user.id
+        )
+        .order_by(
+            WatchlistItem.created_at.desc()
+        )
+    )
 
-@app.get("/portfolio",response_model=list[PositionOut])
-def portfolio(db:Session=Depends(get_db)):
-    positions=list(db.scalars(select(PortfolioPosition).order_by(PortfolioPosition.created_at.desc())))
-    out=[]
-    for p in positions:
-        try: price=get_stock(p.ticker)["price"]
-        except Exception: price=None
-        mv=price*p.quantity if price is not None else None
-        cost=p.average_cost*p.quantity
-        out.append(PositionOut(id=p.id,ticker=p.ticker,quantity=p.quantity,average_cost=p.average_cost,currency=p.currency,created_at=p.created_at,current_price=price,market_value=mv,unrealized_pnl=(mv-cost) if mv is not None else None,unrealized_pnl_percent=((mv-cost)/cost*100) if mv is not None and cost else None))
-    return out
-@app.post("/portfolio",response_model=PositionOut)
-def add_position(body:PositionCreate,db:Session=Depends(get_db)):
-    p=PortfolioPosition(ticker=body.ticker.upper(),quantity=body.quantity,average_cost=body.average_cost,currency=body.currency)
-    db.add(p); db.commit(); db.refresh(p); return PositionOut.model_validate(p)
-@app.delete("/portfolio/{position_id}")
-def delete_position(position_id:int,db:Session=Depends(get_db)):
-    p=db.get(PortfolioPosition,position_id)
-    if not p: raise HTTPException(404,"No encontrado")
-    db.delete(p); db.commit(); return {"deleted":True}
+    return list(
+        db.scalars(statement)
+    )
+
+
+@app.post(
+    "/watchlist",
+    response_model=WatchlistOut,
+)
+def add_watchlist(
+    body: WatchlistCreate,
+
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+
+    db: Session = Depends(get_db),
+):
+    ticker = (
+        body.ticker
+        .strip()
+        .upper()
+    )
+
+    existing = db.scalar(
+        select(WatchlistItem).where(
+            WatchlistItem.user_id
+            == user.id,
+
+            WatchlistItem.ticker
+            == ticker,
+        )
+    )
+
+    if existing:
+        return existing
+
+    item = WatchlistItem(
+        user_id=user.id,
+        ticker=ticker,
+    )
+
+    db.add(item)
+
+    try:
+        db.commit()
+        db.refresh(item)
+
+    except Exception as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "No fue posible guardar "
+                "el activo."
+            ),
+        ) from exc
+
+    return item
+
+
+@app.delete(
+    "/watchlist/{ticker}"
+)
+def delete_watchlist(
+    ticker: str,
+
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+
+    db: Session = Depends(get_db),
+):
+    item = db.scalar(
+        select(WatchlistItem).where(
+            WatchlistItem.user_id
+            == user.id,
+
+            WatchlistItem.ticker
+            == ticker.upper(),
+        )
+    )
+
+    if not item:
+        raise HTTPException(
+            status_code=404,
+            detail="Activo no encontrado.",
+        )
+
+    db.delete(item)
+    db.commit()
+
+    return {
+        "deleted": True
+    }
+
+
+@app.get(
+    "/portfolio",
+    response_model=list[PositionOut],
+)
+def portfolio(
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+
+    db: Session = Depends(get_db),
+):
+    statement = (
+        select(PortfolioPosition)
+        .where(
+            PortfolioPosition.user_id
+            == user.id
+        )
+        .order_by(
+            PortfolioPosition.created_at.desc()
+        )
+    )
+
+    positions = list(
+        db.scalars(statement)
+    )
+
+    output = []
+
+    for position in positions:
+        try:
+            price = get_stock(
+                position.ticker
+            )["price"]
+
+        except Exception:
+            price = None
+
+        market_value = (
+            price * position.quantity
+            if price is not None
+            else None
+        )
+
+        cost = (
+            position.average_cost
+            * position.quantity
+        )
+
+        pnl = (
+            market_value - cost
+            if market_value is not None
+            else None
+        )
+
+        pnl_percent = (
+            (pnl / cost) * 100
+            if (
+                pnl is not None
+                and cost
+            )
+            else None
+        )
+
+        output.append(
+            PositionOut(
+                id=position.id,
+
+                ticker=position.ticker,
+
+                quantity=(
+                    position.quantity
+                ),
+
+                average_cost=(
+                    position.average_cost
+                ),
+
+                currency=(
+                    position.currency
+                ),
+
+                created_at=(
+                    position.created_at
+                ),
+
+                current_price=price,
+
+                market_value=(
+                    market_value
+                ),
+
+                unrealized_pnl=pnl,
+
+                unrealized_pnl_percent=(
+                    pnl_percent
+                ),
+            )
+        )
+
+    return output
+
+
+@app.post(
+    "/portfolio",
+    response_model=PositionOut,
+)
+def add_position(
+    body: PositionCreate,
+
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+
+    db: Session = Depends(get_db),
+):
+    position = PortfolioPosition(
+        user_id=user.id,
+
+        ticker=(
+            body.ticker
+            .strip()
+            .upper()
+        ),
+
+        quantity=body.quantity,
+
+        average_cost=(
+            body.average_cost
+        ),
+
+        currency=body.currency,
+    )
+
+    db.add(position)
+    db.commit()
+    db.refresh(position)
+
+    return PositionOut(
+        id=position.id,
+
+        ticker=position.ticker,
+
+        quantity=position.quantity,
+
+        average_cost=(
+            position.average_cost
+        ),
+
+        currency=position.currency,
+
+        created_at=(
+            position.created_at
+        ),
+
+        current_price=None,
+
+        market_value=None,
+
+        unrealized_pnl=None,
+
+        unrealized_pnl_percent=None,
+    )
+
+
+@app.delete(
+    "/portfolio/{position_id}"
+)
+def delete_position(
+    position_id: int,
+
+    user: AuthUser = Depends(
+        get_current_user
+    ),
+
+    db: Session = Depends(get_db),
+):
+    position = db.scalar(
+        select(
+            PortfolioPosition
+        ).where(
+            PortfolioPosition.id
+            == position_id,
+
+            PortfolioPosition.user_id
+            == user.id,
+        )
+    )
+
+    if not position:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Posición no encontrada."
+            ),
+        )
+
+    db.delete(position)
+    db.commit()
+
+    return {
+        "deleted": True
+    }
 
 @app.get("/search")
 def search(q: str = ""):

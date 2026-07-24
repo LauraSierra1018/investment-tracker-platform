@@ -6,11 +6,16 @@ import {
   Brain,
   Loader2,
   Check,
+  LockKeyhole,
+  LogIn,
 } from 'lucide-react';
+
+import { useRouter } from 'next/navigation';
 
 import { api } from '@/lib/api';
 import type { Stock } from '@/types';
 import { StockSearch } from '@/components/stock-search';
+import { createClient } from '@/lib/supabase/client';
 
 const badge = {
   cumple: 'bg-emerald-100 text-emerald-800',
@@ -20,6 +25,8 @@ const badge = {
 };
 
 export function Research() {
+  const router = useRouter();
+
   const [q, setQ] = useState('');
   const [stock, setStock] = useState<Stock | null>(null);
 
@@ -32,6 +39,8 @@ export function Research() {
   const [error, setError] = useState('');
   const [aiError, setAiError] = useState('');
 
+  const [loginRequired, setLoginRequired] = useState(false);
+
   const [ai, setAi] = useState<any>(null);
 
   async function runTicker(ticker: string) {
@@ -42,9 +51,8 @@ export function Research() {
     setAiError('');
     setAi(null);
 
-    // Cada vez que investigamos otro activo,
-    // reiniciamos el estado del botón.
     setSaved(false);
+    setLoginRequired(false);
 
     try {
       const result = await api<Stock>(
@@ -71,10 +79,29 @@ export function Research() {
   async function add() {
     if (!stock || saving || saved) return;
 
-    setSaving(true);
     setError('');
+    setLoginRequired(false);
+
+    /*
+      Primero comprobamos si existe una sesión.
+      Research sigue siendo público, pero guardar requiere cuenta.
+    */
 
     try {
+      const supabase = createClient();
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        setLoginRequired(true);
+        return;
+      }
+
+      setSaving(true);
+
       await api('/watchlist', {
         method: 'POST',
         body: JSON.stringify({
@@ -138,8 +165,8 @@ export function Research() {
           </h1>
 
           <p className="mt-2 text-slate-500">
-            Busca por nombre, ticker o ETF. No necesitas conocer el
-            símbolo exacto.
+            Busca por nombre, ticker o ETF. No necesitas conocer el símbolo
+            exacto.
           </p>
         </div>
 
@@ -169,7 +196,7 @@ export function Research() {
         )}
       </div>
 
-      {/* STOCK RESULT */}
+      {/* RESULT */}
 
       {stock && (
         <>
@@ -203,7 +230,7 @@ export function Research() {
               </div>
             </div>
 
-            {/* MAIN METRICS */}
+            {/* METRICS */}
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {[
@@ -258,8 +285,7 @@ export function Research() {
                 onClick={add}
                 disabled={saving || saved}
                 className={`
-                  flex items-center gap-2 rounded-xl px-4 py-2 font-bold
-                  transition
+                  flex items-center gap-2 rounded-xl px-4 py-2 font-bold transition
                   ${
                     saved
                       ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -310,6 +336,43 @@ export function Research() {
                 )}
               </button>
             </div>
+
+            {/* LOGIN REQUIRED */}
+
+            {loginRequired && (
+              <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white">
+                      <LockKeyhole
+                        size={19}
+                        className="text-indigo-600"
+                      />
+                    </div>
+
+                    <div>
+                      <h3 className="font-black text-slate-900">
+                        Inicia sesión para guardar {stock.ticker}
+                      </h3>
+
+                      <p className="mt-1 max-w-xl text-sm leading-6 text-slate-600">
+                        Puedes investigar cualquier activo sin una cuenta.
+                        Para mantener una watchlist personal y utilizar el
+                        portafolio necesitas iniciar sesión.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => router.push('/login')}
+                    className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-indigo-700"
+                  >
+                    <LogIn size={16} />
+                    Iniciar sesión
+                  </button>
+                </div>
+              </div>
+            )}
 
             {aiError && (
               <div className="mt-4 rounded-xl bg-rose-50 p-4 text-sm font-medium text-rose-700">

@@ -1,38 +1,58 @@
-const API = "/api";
+import { createClient } from '@/lib/supabase/client';
+
+const API = '/api';
 
 export async function api<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
-  try {
-    const response = await fetch(`${API}${path}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options?.headers || {}),
-      },
-      cache: "no-store",
-    });
+  const supabase = createClient();
 
-    if (!response.ok) {
-      let message = `Error ${response.status}: ${response.statusText}`;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-      try {
-        const data = await response.json();
-        message = data.detail || data.message || message;
-      } catch {
-        // La respuesta no era JSON.
-      }
+  const headers = new Headers(options?.headers);
 
-      throw new Error(message);
-    }
+  headers.set('Content-Type', 'application/json');
 
-    return await response.json();
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new Error(`No se pudo conectar con la API: ${error.message}`);
-    }
-
-    throw new Error("No se pudo conectar con la API.");
+  /*
+   * Si hay usuario autenticado enviamos su JWT
+   * automáticamente a FastAPI.
+   */
+  if (session?.access_token) {
+    headers.set(
+      'Authorization',
+      `Bearer ${session.access_token}`
+    );
   }
+
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    headers,
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    let message = `Error ${response.status}`;
+
+    try {
+      const data = await response.json();
+
+      message =
+        data.detail ||
+        data.message ||
+        message;
+    } catch {
+      // respuesta sin JSON
+    }
+
+    throw new Error(message);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return response.json();
 }
