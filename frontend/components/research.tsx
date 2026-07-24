@@ -741,52 +741,119 @@ function ScoreRow({
 
 function KeyMetrics({ stock, criteria }: { stock: Stock; criteria: Criterion[] }) {
   const s = stock as any;
+
+  const currentPrice =
+    stock.price != null ? Number(stock.price) : null;
+
+  const targetPrice =
+    s.target_price != null ? Number(s.target_price) : null;
+
+  const upside =
+    currentPrice != null &&
+    currentPrice > 0 &&
+    targetPrice != null
+      ? ((targetPrice - currentPrice) / currentPrice) * 100
+      : null;
+
+  const currency = stock.currency || 'USD';
+
   const metrics = [
     {
       label: 'Market Cap',
       value: stock.market_cap ? formatLarge(stock.market_cap) : '—',
+      subtitle: 'Tamaño de la empresa',
     },
     {
       label: 'P/E',
-      value: stock.pe_ratio != null ? `${Number(stock.pe_ratio).toFixed(1)}x` : '—',
+      value:
+        stock.pe_ratio != null
+          ? `${Number(stock.pe_ratio).toFixed(1)}x`
+          : '—',
+      subtitle: 'Precio / ganancias',
+    },
+    {
+      label: 'Precio actual',
+      value:
+        currentPrice != null
+          ? `${currency} ${currentPrice.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`
+          : '—',
+      subtitle: 'Cotización actual',
     },
     {
       label: 'Precio objetivo',
       value:
-        s.target_price != null
-          ? `${stock.currency || ''} ${Number(s.target_price).toFixed(2)}`
+        targetPrice != null
+          ? `${currency} ${targetPrice.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`
           : criterionValue(criteria, ['target', 'precio objetivo']),
+      subtitle: 'Promedio de analistas',
     },
     {
-      label: 'Free float',
+      label: 'Potencial',
       value:
-        stock.free_float_percent != null
-          ? `${Number(stock.free_float_percent).toFixed(1)}%`
+        upside != null
+          ? `${upside >= 0 ? '+' : ''}${upside.toFixed(1)}%`
           : '—',
+      subtitle:
+        upside == null
+          ? 'Sin precio objetivo'
+          : upside >= 15
+          ? 'Potencial ≥ 15%'
+          : upside >= 0
+          ? 'Potencial entre 0% y 15%'
+          : 'Objetivo inferior al precio actual',
+      tone:
+        upside == null
+          ? 'neutral'
+          : upside >= 15
+          ? 'positive'
+          : upside >= 0
+          ? 'warning'
+          : 'negative',
     },
     {
       label: 'Beta',
-      value: s.beta != null ? Number(s.beta).toFixed(2) : criterionValue(criteria, ['beta']),
-    },
-    {
-      label: 'Revenue growth',
       value:
-        s.revenue_growth != null
-          ? formatPercentish(s.revenue_growth)
-          : criterionValue(criteria, ['revenue growth', 'crecimiento ingresos']),
+        s.beta != null
+          ? Number(s.beta).toFixed(2)
+          : criterionValue(criteria, ['beta']),
+      subtitle: 'Volatilidad relativa',
     },
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-      {metrics.map((metric) => (
-        <article key={metric.label} className="card p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-            {metric.label}
-          </p>
-          <p className="mt-2 text-lg font-black">{metric.value}</p>
-        </article>
-      ))}
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {metrics.map((metric) => {
+        const valueTone =
+          metric.tone === 'positive'
+            ? 'text-emerald-600'
+            : metric.tone === 'warning'
+            ? 'text-amber-600'
+            : metric.tone === 'negative'
+            ? 'text-rose-600'
+            : 'text-slate-950';
+
+        return (
+          <article key={metric.label} className="card p-4">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-400">
+              {metric.label}
+            </p>
+
+            <p className={`mt-2 text-lg font-black ${valueTone}`}>
+              {metric.value}
+            </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              {metric.subtitle}
+            </p>
+          </article>
+        );
+      })}
     </section>
   );
 }
