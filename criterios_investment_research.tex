@@ -1,0 +1,455 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\geometry{margin=2.2cm}
+\definecolor{darkblue}{HTML}{1E3A8A}
+\hypersetup{colorlinks=true,linkcolor=darkblue,urlcolor=darkblue}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Investment Research AI}
+\rhead{Metodología de evaluación}
+\cfoot{\thepage}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+
+\title{\textbf{Metodología de Evaluación de Acciones}\\
+\large Criterios, fórmulas, indicadores y ponderación del puntaje final}
+\author{Investment Research AI}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Este documento describe la metodología de evaluación cuantitativa utilizada por la plataforma Investment Research AI. Se detallan los 14 indicadores financieros actualmente empleados, sus fórmulas, rangos de evaluación, pesos y contribución al puntaje final. Los datos provienen principalmente de Yahoo Finance mediante \texttt{yfinance}. El score debe interpretarse como una herramienta de apoyo al análisis, no como una recomendación automática de compra o venta.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Fórmula general del puntaje}
+
+Cada criterio disponible recibe un puntaje interno:
+\[
+S_i=
+\begin{cases}
+100, & \text{Cumple}\\
+55, & \text{Revisar}\\
+15, & \text{No cumple}
+\end{cases}
+\]
+
+Los criterios sin dato no participan en el promedio. El score final es:
+\[
+\boxed{
+Score=
+\frac{\sum_{i=1}^{n} S_iW_i}
+{\sum_{i=1}^{n}W_i}
+}
+\]
+donde $S_i$ es el puntaje del criterio y $W_i$ su peso.
+
+\subsection{Clasificación final}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Score} & \textbf{Clasificación}\\
+\midrule
+$\geq 80$ & Oportunidad prioritaria\\
+$65$--$79.9$ & En seguimiento\\
+$50$--$64.9$ & Neutral\\
+$<50$ & Precaución\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Pesos de los 14 criterios}
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Criterio} & \textbf{Peso}\\
+\midrule
+Relación P/E & 10\%\\
+Crecimiento de ingresos & 9\%\\
+Crecimiento de ganancias & 9\%\\
+Capitalización de mercado & 8\%\\
+Potencial al precio objetivo & 8\%\\
+Ventas totales & 7\%\\
+ROE & 7\%\\
+Margen operativo & 7\%\\
+Deuda / patrimonio & 7\%\\
+Flujo de caja libre & 7\%\\
+Free float & 6\%\\
+ROA & 5\%\\
+Razón corriente & 5\%\\
+Beta & 5\%\\
+\midrule
+\textbf{Total} & \textbf{100\%}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Indicadores, fórmulas y reglas}
+
+\subsection{Capitalización de mercado --- 8\%}
+\[
+\boxed{Market\ Cap = Precio\ por\ acción \times Acciones\ en\ circulación}
+\]
+La plataforma expresa el valor en miles de millones:
+\[
+MarketCap_B=\frac{MarketCap}{10^9}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq 2$ mil millones USD.
+\item Revisar: $0.3$--$1.999$ mil millones USD.
+\item No cumple: $<0.3$ mil millones USD.
+\end{itemize}
+
+\textbf{Interpretación:} aproxima el tamaño, liquidez, estabilidad y cobertura institucional de la compañía.
+
+\subsection{Relación P/E --- 10\%}
+\[
+\boxed{P/E=\frac{Precio\ por\ acción}{Ganancia\ por\ acción\ (EPS)}}
+\]
+
+La plataforma utiliza \texttt{trailingPE} y, si no está disponible, \texttt{forwardPE}.
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $20\leq P/E\leq25$.
+\item Revisar: $10\leq P/E\leq40$, excluyendo el rango ideal.
+\item No cumple: $P/E<10$ o $P/E>40$.
+\end{itemize}
+
+\textbf{Interpretación:} mide cuánto paga el mercado por cada unidad de beneficio. Debe interpretarse junto con crecimiento y sector.
+
+\subsection{Ventas totales --- 7\%}
+\[
+\boxed{Revenue_M=\frac{Revenue}{10^6}}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq1{,}000$ millones USD.
+\item Revisar: $100$--$999.99$ millones USD.
+\item No cumple: $<100$ millones USD.
+\end{itemize}
+
+\textbf{Interpretación:} ayuda a distinguir empresas con escala comercial de negocios todavía pequeños.
+
+\subsection{Free Float --- 6\%}
+\[
+\boxed{
+Free\ Float(\%)=
+\frac{Float\ Shares}{Shares\ Outstanding}\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq40\%$.
+\item Revisar: $20\%$--$39.99\%$.
+\item No cumple: $<20\%$.
+\end{itemize}
+
+\textbf{Interpretación:} un float muy bajo puede implicar menor liquidez, mayor volatilidad y mayor concentración de propiedad.
+
+\subsection{Precio objetivo promedio y potencial --- 8\%}
+
+El precio objetivo mostrado corresponde al \texttt{targetMeanPrice} disponible en Yahoo Finance, es decir, el precio objetivo promedio de analistas.
+
+\[
+\boxed{
+Upside(\%)=
+\left(
+\frac{Target\ Price-Current\ Price}{Current\ Price}
+\right)\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq15\%$.
+\item Revisar: $0\%$--$14.99\%$.
+\item No cumple: $<0\%$.
+\end{itemize}
+
+\textbf{Interpretación:} incorpora la expectativa del consenso de analistas. No constituye una predicción propia de la plataforma ni garantiza rendimiento futuro.
+
+\subsection{Crecimiento de ingresos --- 9\%}
+\[
+\boxed{
+Revenue\ Growth(\%)=
+\frac{Revenue_t-Revenue_{t-1}}{Revenue_{t-1}}\times100
+}
+\]
+
+Yahoo Finance entrega el valor en forma decimal y la plataforma lo transforma:
+\[
+Growth_{\%}=Growth_{decimal}\times100
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq10\%$.
+\item Revisar: $0\%$--$9.99\%$.
+\item No cumple: $<0\%$.
+\end{itemize}
+
+\textbf{Interpretación:} mide si el negocio está expandiendo sus ventas.
+
+\subsection{Crecimiento de ganancias --- 9\%}
+\[
+\boxed{
+Earnings\ Growth(\%)=
+\frac{Earnings_t-Earnings_{t-1}}{Earnings_{t-1}}\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq10\%$.
+\item Revisar: $0\%$--$9.99\%$.
+\item No cumple: $<0\%$.
+\end{itemize}
+
+\textbf{Interpretación:} permite verificar si el crecimiento comercial se traduce también en crecimiento de beneficios.
+
+\subsection{ROE --- 7\%}
+\[
+\boxed{
+ROE=
+\frac{Utilidad\ neta}{Patrimonio\ promedio}\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq15\%$.
+\item Revisar: $8\%$--$14.99\%$.
+\item No cumple: $<8\%$.
+\end{itemize}
+
+\textbf{Interpretación:} mide la rentabilidad generada sobre el capital de los accionistas.
+
+\subsection{ROA --- 5\%}
+\[
+\boxed{
+ROA=
+\frac{Utilidad\ neta}{Activos\ totales\ promedio}\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq7\%$.
+\item Revisar: $3\%$--$6.99\%$.
+\item No cumple: $<3\%$.
+\end{itemize}
+
+\textbf{Interpretación:} mide la eficiencia con que la compañía utiliza sus activos.
+
+\subsection{Margen operativo --- 7\%}
+\[
+\boxed{
+Operating\ Margin=
+\frac{Operating\ Income}{Revenue}\times100
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq15\%$.
+\item Revisar: $5\%$--$14.99\%$.
+\item No cumple: $<5\%$.
+\end{itemize}
+
+\textbf{Interpretación:} muestra qué proporción de las ventas queda después de los costos y gastos operativos.
+
+\subsection{Deuda / Patrimonio --- 7\%}
+\[
+\boxed{
+D/E=\frac{Deuda\ total}{Patrimonio}
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\leq100$.
+\item Revisar: $100$--$200$.
+\item No cumple: $>200$.
+\end{itemize}
+
+\textbf{Interpretación:} mide el apalancamiento financiero. Un valor muy alto puede implicar menor flexibilidad y mayor riesgo financiero.
+
+\subsection{Razón corriente --- 5\%}
+\[
+\boxed{
+Current\ Ratio=
+\frac{Activos\ corrientes}{Pasivos\ corrientes}
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $\geq1.2$.
+\item Revisar: $0.8$--$1.19$.
+\item No cumple: $<0.8$.
+\end{itemize}
+
+\textbf{Interpretación:} mide la capacidad de cubrir obligaciones de corto plazo con activos corrientes.
+
+\subsection{Flujo de caja libre --- 7\%}
+\[
+\boxed{
+FCF=Operating\ Cash\ Flow-Capital\ Expenditures
+}
+\]
+
+La plataforma lo expresa en millones:
+\[
+FCF_M=\frac{FCF}{10^6}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $FCF\geq0$.
+\item Revisar: $-1\leq FCF<0$ millones USD.
+\item No cumple: $FCF<-1$ millón USD.
+\end{itemize}
+
+\textbf{Interpretación:} representa el efectivo disponible después de inversión operativa y puede utilizarse para reinversión, reducción de deuda, recompras o dividendos.
+
+\subsection{Beta --- 5\%}
+\[
+\boxed{
+\beta_i=
+\frac{\operatorname{Cov}(R_i,R_m)}
+{\operatorname{Var}(R_m)}
+}
+\]
+
+\textbf{Regla:}
+\begin{itemize}[leftmargin=*]
+\item Cumple: $0.7\leq\beta\leq1.3$.
+\item Revisar: $0\leq\beta\leq2$, excluyendo el rango ideal.
+\item No cumple: $\beta<0$ o $\beta>2$.
+\end{itemize}
+
+\textbf{Interpretación:}
+\begin{itemize}[leftmargin=*]
+\item $\beta\approx1$: comportamiento similar al mercado.
+\item $\beta>1$: mayor sensibilidad y volatilidad relativa.
+\item $\beta<1$: menor sensibilidad relativa.
+\end{itemize}
+
+\section{Distribución conceptual del modelo}
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Dimensión} & \textbf{Peso total}\\
+\midrule
+Crecimiento (ventas + earnings + revenue total) & 25\%\\
+Valoración y expectativas (P/E + upside) & 18\%\\
+Rentabilidad (ROE + ROA + margen operativo) & 19\%\\
+Solvencia y caja (D/E + current ratio + FCF) & 19\%\\
+Tamaño y liquidez (market cap + free float) & 14\%\\
+Riesgo de mercado (beta) & 5\%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Ejemplo de cálculo del score}
+
+Supóngase que una acción obtiene:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Criterio} & \textbf{Peso} & \textbf{Estado} & \textbf{Score} & \textbf{Aporte}\\
+\midrule
+Capitalización & 8 & Cumple & 100 & 800\\
+P/E & 10 & Revisar & 55 & 550\\
+Ventas & 7 & Cumple & 100 & 700\\
+Free float & 6 & Cumple & 100 & 600\\
+Potencial & 8 & Cumple & 100 & 800\\
+Revenue growth & 9 & Cumple & 100 & 900\\
+Earnings growth & 9 & Revisar & 55 & 495\\
+ROE & 7 & Cumple & 100 & 700\\
+ROA & 5 & Revisar & 55 & 275\\
+Margen operativo & 7 & Cumple & 100 & 700\\
+D/E & 7 & Revisar & 55 & 385\\
+Current ratio & 5 & Cumple & 100 & 500\\
+FCF & 7 & Cumple & 100 & 700\\
+Beta & 5 & Cumple & 100 & 500\\
+\midrule
+\textbf{Total} & \textbf{100} & & & \textbf{8,605}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Por tanto:
+\[
+Score=\frac{8605}{100}=86.05
+\]
+
+La clasificación sería:
+\[
+\boxed{\text{Oportunidad prioritaria}}
+\]
+
+\section{Campos utilizados de Yahoo Finance}
+
+La implementación actual utiliza principalmente:
+\begin{itemize}[leftmargin=*]
+\item \texttt{marketCap}
+\item \texttt{trailingPE}
+\item \texttt{forwardPE}
+\item \texttt{totalRevenue}
+\item \texttt{sharesOutstanding}
+\item \texttt{floatShares}
+\item \texttt{targetMeanPrice}
+\item \texttt{revenueGrowth}
+\item \texttt{earningsGrowth}
+\item \texttt{returnOnEquity}
+\item \texttt{returnOnAssets}
+\item \texttt{operatingMargins}
+\item \texttt{debtToEquity}
+\item \texttt{currentRatio}
+\item \texttt{freeCashflow}
+\item \texttt{beta}
+\end{itemize}
+
+\section{Limitaciones}
+
+\begin{enumerate}[leftmargin=*]
+\item Los umbrales son reglas configuradas por la plataforma, no leyes universales de valoración.
+\item P/E, márgenes, deuda y liquidez deben interpretarse según sector e industria.
+\item El precio objetivo de analistas no garantiza rendimiento futuro.
+\item Los criterios sin dato se excluyen del promedio ponderado.
+\item El rango P/E de 20--25 refleja una preferencia específica de la metodología.
+\item El FCF actualmente se evalúa sobre todo por ser positivo o negativo; podría mejorarse con FCF Yield.
+\item Beta mide sensibilidad histórica al mercado, no riesgo total.
+\end{enumerate}
+
+\section{Conclusión}
+
+El modelo actual sintetiza 14 indicadores de tamaño, liquidez, valoración, crecimiento, rentabilidad, solvencia, caja y riesgo. Su objetivo es priorizar empresas para análisis adicional y hacer transparente por qué una acción obtiene determinado score.
+
+\end{document}
