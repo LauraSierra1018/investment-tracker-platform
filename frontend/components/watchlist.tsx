@@ -100,8 +100,11 @@ function WatchlistContent() {
         })
       );
 
-      setStocks(results);
-      setFilteredStocks(results);
+      const orderedResults = [...results].sort(compareStocksByScore);
+
+      setStocks(orderedResults);
+      setFilteredStocks(orderedResults);
+
     } catch (error: any) {
       console.error(
         'Error cargando watchlist:',
@@ -127,7 +130,9 @@ function WatchlistContent() {
       search.toLowerCase().trim();
 
     if (!value) {
-      setFilteredStocks(stocks);
+      setFilteredStocks(
+        [...stocks].sort(compareStocksByScore)
+      );
       return;
     }
 
@@ -149,7 +154,9 @@ function WatchlistContent() {
         );
       });
 
-    setFilteredStocks(filtered);
+    setFilteredStocks(
+      [...filtered].sort(compareStocksByScore)
+    );
   }, [search, stocks]);
 
   async function remove(ticker: string) {
@@ -322,12 +329,15 @@ function WatchlistContent() {
 
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1500px]">
+            <table className="w-full min-w-[1650px]">
 
               {/* HEADER */}
 
               <thead>
                 <tr className="border-b bg-slate-50 text-left">
+                  <TableHeader>
+                    Ticker
+                  </TableHeader>
 
                   <TableHeader>
                     Empresa
@@ -337,16 +347,20 @@ function WatchlistContent() {
                     Descripción
                   </TableHeader>
 
+                  <TableHeader align="center">
+                    Score
+                  </TableHeader>
+
+                  <TableHeader align="right">
+                    Potencial
+                  </TableHeader>
+
                   <TableHeader align="right">
                     Precio
                   </TableHeader>
 
                   <TableHeader align="right">
                     Target
-                  </TableHeader>
-
-                  <TableHeader align="right">
-                    Potencial
                   </TableHeader>
 
                   <TableHeader align="right">
@@ -366,13 +380,8 @@ function WatchlistContent() {
                   </TableHeader>
 
                   <TableHeader align="center">
-                    Score
-                  </TableHeader>
-
-                  <TableHeader align="center">
                     Acción
                   </TableHeader>
-
                 </tr>
               </thead>
 
@@ -391,105 +400,104 @@ function WatchlistContent() {
 
                     return (
                       <tr
-                        key={
-                          stock.ticker
-                        }
+                        key={stock.ticker}
                         className="transition hover:bg-slate-50/80"
                       >
-
-                        {/* COMPANY */}
+                        {/* TICKER */}
 
                         <td className="px-5 py-5 align-top">
-                          <div className="flex items-start gap-3">
+                          <div className="flex items-center gap-3">
                             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-black text-white">
-                              {stock.ticker.slice(
-                                0,
-                                4
-                              )}
+                              {stock.ticker.slice(0, 4)}
                             </div>
 
-                            <div>
-                              <div className="font-black">
-                                {
-                                  stock.ticker
-                                }
-                              </div>
-
-                              <div className="mt-0.5 max-w-[180px] truncate text-sm font-medium text-slate-700">
-                                {
-                                  stock.company
-                                }
-                              </div>
-
-                              <div className="mt-1 text-xs text-slate-400">
-                                {stock.sector ||
-                                  'Sector sin dato'}
-                              </div>
-                            </div>
+                            <span className="font-black">
+                              {stock.ticker}
+                            </span>
                           </div>
                         </td>
 
-                        {/* DESCRIPTION */}
+                        {/* EMPRESA */}
 
-                        <td className="max-w-[300px] px-5 py-5 align-top">
+                        <td className="max-w-[220px] px-5 py-5 align-top">
+                          <p className="font-black text-slate-800">
+                            {stock.company}
+                          </p>
+
+                          <p className="mt-1 text-xs text-slate-400">
+                            {stock.sector || 'Sector sin dato'}
+                          </p>
+                        </td>
+
+                        {/* DESCRIPCIÓN */}
+
+                        <td className="max-w-[320px] px-5 py-5 align-top">
                           <p className="line-clamp-3 text-sm leading-5 text-slate-600">
-                            {getDescription(
-                              stock
-                            )}
+                            {getDescription(stock)}
                           </p>
 
                           {stock.industry && (
                             <span className="mt-2 inline-block rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
-                              {
-                                stock.industry
-                              }
+                              {stock.industry}
                             </span>
                           )}
                         </td>
 
-                        {/* PRICE */}
+                        {/* SCORE */}
+
+                        <td className="px-5 py-5 text-center align-top">
+                          <ScoreBadge
+                            score={stock.score}
+                            classification={stock.classification}
+                          />
+                        </td>
+
+                        {/* POTENCIAL */}
+
+                        <td className="px-5 py-5 text-right align-top">
+                          {upside != null ? (
+                            <span
+                              className={`inline-flex rounded-lg px-2 py-1 text-xs font-black ${
+                                upside >= 15
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : upside >= 0
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-rose-100 text-rose-700'
+                              }`}
+                            >
+                              {upside >= 0 ? '+' : ''}
+                              {upside.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">
+                              —
+                            </span>
+                          )}
+                        </td>
+
+                        {/* PRECIO */}
 
                         <td className="px-5 py-5 text-right align-top">
                           <div className="font-black">
-                            {formatPrice(
-                              stock
-                            )}
+                            {formatPrice(stock)}
                           </div>
 
-                          {dailyChange !=
-                            null && (
+                          {dailyChange != null && (
                             <div
                               className={`mt-1 flex items-center justify-end gap-1 text-xs font-bold ${
-                                dailyChange >=
-                                0
+                                dailyChange >= 0
                                   ? 'text-emerald-600'
                                   : 'text-rose-600'
                               }`}
                             >
-                              {dailyChange >=
-                              0 ? (
-                                <TrendingUp
-                                  size={
-                                    13
-                                  }
-                                />
+                              {dailyChange >= 0 ? (
+                                <TrendingUp size={13} />
                               ) : (
-                                <TrendingDown
-                                  size={
-                                    13
-                                  }
-                                />
+                                <TrendingDown size={13} />
                               )}
 
-                              {dailyChange >=
-                              0
-                                ? '+'
-                                : ''}
-
-                              {dailyChange.toFixed(
-                                2
-                              )}
-                              %
+                              {dailyChange >= 0 ? '+' : ''}
+                              {dailyChange.toFixed(2)}%
                             </div>
                           )}
                         </td>
@@ -497,63 +505,24 @@ function WatchlistContent() {
                         {/* TARGET */}
 
                         <td className="px-5 py-5 text-right align-top font-bold">
-                          {stock.target_price !=
-                          null
-                            ? `$${stock.target_price.toFixed(
-                                2
-                              )}`
+                          {stock.target_price != null
+                            ? `${stock.currency || 'USD'} ${stock.target_price.toFixed(2)}`
                             : '—'}
                         </td>
 
-                        {/* UPSIDE */}
-
-                        <td className="px-5 py-5 text-right align-top">
-                          {upside != null ? (
-                            <span
-                              className={`inline-flex rounded-lg px-2 py-1 text-xs font-black ${
-                                upside >=
-                                15
-                                  ? 'bg-emerald-100 text-emerald-700'
-                                  : upside >=
-                                    0
-                                  ? 'bg-amber-100 text-amber-700'
-                                  : 'bg-rose-100 text-rose-700'
-                              }`}
-                            >
-                              {upside >=
-                              0
-                                ? '+'
-                                : ''}
-
-                              {upside.toFixed(
-                                1
-                              )}
-                              %
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-
-                        {/* PE */}
+                        {/* P/E */}
 
                         <td className="px-5 py-5 text-right align-top">
                           <MetricValue
                             value={
-                              stock.pe_ratio !=
-                              null
-                                ? `${stock.pe_ratio.toFixed(
-                                    1
-                                  )}x`
+                              stock.pe_ratio != null
+                                ? `${stock.pe_ratio.toFixed(1)}x`
                                 : null
                             }
                             status={
-                              stock.pe_ratio !=
-                                null &&
-                              stock.pe_ratio >=
-                                20 &&
-                              stock.pe_ratio <=
-                                25
+                              stock.pe_ratio != null &&
+                              stock.pe_ratio >= 20 &&
+                              stock.pe_ratio <= 25
                                 ? 'good'
                                 : undefined
                             }
@@ -563,70 +532,42 @@ function WatchlistContent() {
                         {/* MARKET CAP */}
 
                         <td className="px-5 py-5 text-right align-top font-medium">
-                          {formatLargeNumber(
-                            stock.market_cap
-                          )}
+                          {formatLargeNumber(stock.market_cap)}
                         </td>
 
-                        {/* REVENUE */}
+                        {/* VENTAS */}
 
                         <td className="px-5 py-5 text-right align-top font-medium">
-                          {formatRevenue(
-                            stock
-                          )}
+                          {formatRevenue(stock)}
                         </td>
 
-                        {/* FLOAT */}
+                        {/* FREE FLOAT */}
 
                         <td className="px-5 py-5 text-right align-top">
                           <MetricValue
                             value={
-                              stock.free_float_percent !=
-                              null
-                                ? `${stock.free_float_percent.toFixed(
-                                    1
-                                  )}%`
+                              stock.free_float_percent != null
+                                ? `${stock.free_float_percent.toFixed(1)}%`
                                 : null
                             }
                             status={
-                              stock.free_float_percent !=
-                                null &&
-                              stock.free_float_percent >=
-                                40
+                              stock.free_float_percent != null &&
+                              stock.free_float_percent >= 40
                                 ? 'good'
                                 : undefined
                             }
                           />
                         </td>
 
-                        {/* SCORE */}
-
-                        <td className="px-5 py-5 text-center align-top">
-                          <ScoreBadge
-                            score={
-                              stock.score
-                            }
-                            classification={
-                              stock.classification
-                            }
-                          />
-                        </td>
-
-                        {/* DELETE */}
+                        {/* ELIMINAR */}
 
                         <td className="px-5 py-5 text-center align-top">
                           <button
-                            onClick={() =>
-                              remove(
-                                stock.ticker
-                              )
-                            }
+                            onClick={() => remove(stock.ticker)}
                             title="Eliminar de watchlist"
                             className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                           >
-                            <Trash2
-                              size={17}
-                            />
+                            <Trash2 size={17} />
                           </button>
                         </td>
                       </tr>
@@ -744,10 +685,13 @@ function ScoreBadge({
   let style =
     'bg-rose-100 text-rose-700';
 
-  if (score >= 75) {
+  if (score >= 80) {
     style =
       'bg-emerald-100 text-emerald-700';
-  } else if (score >= 55) {
+  } else if (score >= 65) {
+    style =
+      'bg-blue-100 text-blue-700';
+  } else if (score >= 50) {
     style =
       'bg-amber-100 text-amber-700';
   }
@@ -757,7 +701,7 @@ function ScoreBadge({
       <span
         className={`inline-flex rounded-lg px-3 py-1 text-sm font-black ${style}`}
       >
-        {score.toFixed(0)}
+        {score.toFixed(1)}
       </span>
 
       {classification && (
@@ -895,4 +839,23 @@ function formatRevenue(
   }
 
   return '—';
+}
+
+function compareStocksByScore(
+  a: WatchlistStock,
+  b: WatchlistStock
+) {
+  if (a.score == null && b.score == null) {
+    return a.ticker.localeCompare(b.ticker);
+  }
+
+  if (a.score == null) {
+    return 1;
+  }
+
+  if (b.score == null) {
+    return -1;
+  }
+
+  return Number(b.score) - Number(a.score);
 }

@@ -48,8 +48,25 @@ type WatchlistItem = {
 type WatchlistRow = {
   ticker: string;
   company: string;
+
+  description?: string | null;
+  sector?: string | null;
+  industry?: string | null;
+
+  score: number | null;
+  classification?: string | null;
+
   price: number | null;
+  target_price: number | null;
+  upside_percent: number | null;
+
+  pe_ratio?: number | null;
+  market_cap?: number | null;
+  revenue?: number | null;
+  free_float_percent?: number | null;
+
   change_percent: number | null;
+  currency?: string | null;
 };
 
 export function Dashboard() {
@@ -163,16 +180,83 @@ export function Dashboard() {
                 )}`
               );
 
+            const price =
+              stock.price != null
+                ? Number(stock.price)
+                : null;
+
+            const target =
+              stock.target_price != null
+                ? Number(stock.target_price)
+                : null;
+
+            const upside =
+              stock.upside_percent ??
+              stock.upside_pct ??
+              (
+                price != null &&
+                price > 0 &&
+                target != null
+                  ? ((target - price) / price) * 100
+                  : null
+              );
+
             return {
               ticker: stock.ticker,
               company: stock.company,
-              price: stock.price,
+
+              description:
+                stock.description ?? null,
+
+              sector:
+                stock.sector ?? null,
+
+              industry:
+                stock.industry ?? null,
+
+              score:
+                stock.score != null
+                  ? Number(stock.score)
+                  : null,
+
+              classification:
+                stock.classification ?? null,
+
+              price,
+              target_price: target,
+              upside_percent:
+                upside != null
+                  ? Number(upside)
+                  : null,
+
+              pe_ratio:
+                stock.pe_ratio != null
+                  ? Number(stock.pe_ratio)
+                  : null,
+
+              market_cap:
+                stock.market_cap != null
+                  ? Number(stock.market_cap)
+                  : null,
+
+              revenue:
+                stock.revenue != null
+                  ? Number(stock.revenue)
+                  : null,
+
+              free_float_percent:
+                stock.free_float_percent != null
+                  ? Number(stock.free_float_percent)
+                  : null,
 
               change_percent:
                 stock.change_percent ??
                 stock.daily_change_percent ??
                 stock.regular_market_change_percent ??
                 null,
+
+              currency:
+                stock.currency ?? 'USD',
             } as WatchlistRow;
           } catch (error) {
             console.error(
@@ -183,13 +267,18 @@ export function Dashboard() {
             return {
               ticker: item.ticker,
               company: item.ticker,
+              score: null,
               price: null,
+              target_price: null,
+              upside_percent: null,
               change_percent: null,
+              currency: 'USD',
             } as WatchlistRow;
           }
         })
       );
 
+      rows.sort(compareDashboardRows);
       setWatchlist(rows);
     } catch (error) {
       console.error(
@@ -508,7 +597,7 @@ export function Dashboard() {
               </div>
 
               <p className="mt-1 text-sm text-slate-500">
-                Tus activos guardados.
+                Ordenados automáticamente de mayor a menor score.
               </p>
             </div>
 
@@ -551,84 +640,114 @@ export function Dashboard() {
               </p>
             </div>
           ) : (
-            <div className="divide-y">
-              {watchlist.map(
-                (item) => {
-                  const change =
-                    item.change_percent;
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1450px]">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left">
+                    <DashboardHeader>Ticker</DashboardHeader>
+                    <DashboardHeader>Empresa</DashboardHeader>
+                    <DashboardHeader>Descripción</DashboardHeader>
+                    <DashboardHeader align="center">Score</DashboardHeader>
+                    <DashboardHeader align="right">Potencial</DashboardHeader>
+                    <DashboardHeader align="right">Precio</DashboardHeader>
+                    <DashboardHeader align="right">Target</DashboardHeader>
+                    <DashboardHeader align="right">P/E</DashboardHeader>
+                    <DashboardHeader align="right">Market Cap</DashboardHeader>
+                    <DashboardHeader align="right">Ventas</DashboardHeader>
+                    <DashboardHeader align="right">Free Float</DashboardHeader>
+                  </tr>
+                </thead>
 
-                  const positive =
-                    change != null &&
-                    change >= 0;
+                <tbody className="divide-y">
+                  {watchlist.map((item) => {
+                    const dailyPositive =
+                      item.change_percent != null &&
+                      item.change_percent >= 0;
 
-                  return (
-                    <div
-                      key={
-                        item.ticker
-                      }
-                      className="flex items-center justify-between gap-4 px-6 py-4 transition hover:bg-slate-50"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-black text-white">
-                          {item.ticker.slice(
-                            0,
-                            4
-                          )}
-                        </div>
+                    return (
+                      <tr
+                        key={item.ticker}
+                        className="transition hover:bg-slate-50/80"
+                      >
+                        <td className="px-5 py-4 align-top">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-xs font-black text-white">
+                              {item.ticker.slice(0, 4)}
+                            </div>
+                            <span className="font-black">{item.ticker}</span>
+                          </div>
+                        </td>
 
-                        <div className="min-w-0">
+                        <td className="max-w-[220px] px-5 py-4 align-top">
+                          <p className="font-bold text-slate-800">{item.company}</p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            {item.sector || 'Sector sin dato'}
+                          </p>
+                        </td>
+
+                        <td className="max-w-[320px] px-5 py-4 align-top">
+                          <p className="line-clamp-3 text-sm leading-5 text-slate-600">
+                            {getDashboardDescription(item)}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-4 text-center align-top">
+                          <DashboardScoreBadge
+                            score={item.score}
+                            classification={item.classification}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 text-right align-top">
+                          <DashboardUpsideBadge value={item.upside_percent} />
+                        </td>
+
+                        <td className="px-5 py-4 text-right align-top">
                           <p className="font-black">
-                            {
-                              item.ticker
-                            }
+                            {formatDashboardPrice(item.price, item.currency)}
                           </p>
+                          {item.change_percent != null && (
+                            <p
+                              className={`mt-1 text-xs font-black ${
+                                dailyPositive
+                                  ? 'text-emerald-600'
+                                  : 'text-rose-600'
+                              }`}
+                            >
+                              {dailyPositive ? '+' : ''}
+                              {item.change_percent.toFixed(2)}%
+                            </p>
+                          )}
+                        </td>
 
-                          <p className="truncate text-sm text-slate-500">
-                            {
-                              item.company
-                            }
-                          </p>
-                        </div>
-                      </div>
+                        <td className="px-5 py-4 text-right align-top font-bold">
+                          {formatDashboardPrice(item.target_price, item.currency)}
+                        </td>
 
-                      <div className="text-right">
-                        <div className="font-black">
-                          {item.price !=
-                          null
-                            ? `$${item.price.toLocaleString(
-                                'en-US',
-                                {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                }
-                              )}`
-                            : 'Sin precio'}
-                        </div>
+                        <td className="px-5 py-4 text-right align-top font-bold">
+                          {item.pe_ratio != null
+                            ? `${item.pe_ratio.toFixed(1)}x`
+                            : '—'}
+                        </td>
 
-                        <div
-                          className={`mt-1 text-sm font-black ${
-                            change == null
-                              ? 'text-slate-400'
-                              : positive
-                              ? 'text-emerald-600'
-                              : 'text-rose-600'
-                          }`}
-                        >
-                          {change != null
-                            ? `${
-                                positive
-                                  ? '+'
-                                  : ''
-                              }${change.toFixed(
-                                2
-                              )}%`
-                            : 'Sin variación'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-              )}
+                        <td className="px-5 py-4 text-right align-top">
+                          {formatDashboardLarge(item.market_cap)}
+                        </td>
+
+                        <td className="px-5 py-4 text-right align-top">
+                          {formatDashboardLarge(item.revenue)}
+                        </td>
+
+                        <td className="px-5 py-4 text-right align-top">
+                          {item.free_float_percent != null
+                            ? `${item.free_float_percent.toFixed(1)}%`
+                            : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
@@ -779,6 +898,145 @@ ${
       </div>
     </div>
   );
+}
+
+
+function DashboardHeader({
+  children,
+  align = 'left',
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right' | 'center';
+}) {
+  const alignment =
+    align === 'right'
+      ? 'text-right'
+      : align === 'center'
+      ? 'text-center'
+      : 'text-left';
+
+  return (
+    <th
+      className={`px-5 py-3 text-[11px] font-black uppercase tracking-wider text-slate-400 ${alignment}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function DashboardScoreBadge({
+  score,
+  classification,
+}: {
+  score: number | null;
+  classification?: string | null;
+}) {
+  if (score == null) {
+    return <span className="text-slate-400">—</span>;
+  }
+
+  const style =
+    score >= 80
+      ? 'bg-emerald-100 text-emerald-700'
+      : score >= 65
+      ? 'bg-blue-100 text-blue-700'
+      : score >= 50
+      ? 'bg-amber-100 text-amber-700'
+      : 'bg-rose-100 text-rose-700';
+
+  return (
+    <div>
+      <span
+        className={`inline-flex rounded-lg px-3 py-1 text-sm font-black ${style}`}
+      >
+        {score.toFixed(1)}
+      </span>
+
+      {classification && (
+        <p className="mt-1 whitespace-nowrap text-[10px] text-slate-400">
+          {classification}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DashboardUpsideBadge({
+  value,
+}: {
+  value: number | null;
+}) {
+  if (value == null) {
+    return <span className="text-slate-400">—</span>;
+  }
+
+  const style =
+    value >= 15
+      ? 'bg-emerald-100 text-emerald-700'
+      : value >= 0
+      ? 'bg-amber-100 text-amber-700'
+      : 'bg-rose-100 text-rose-700';
+
+  return (
+    <span
+      className={`inline-flex rounded-lg px-2 py-1 text-xs font-black ${style}`}
+    >
+      {value >= 0 ? '+' : ''}
+      {value.toFixed(1)}%
+    </span>
+  );
+}
+
+function compareDashboardRows(
+  a: WatchlistRow,
+  b: WatchlistRow
+) {
+  if (a.score == null && b.score == null) {
+    return a.ticker.localeCompare(b.ticker);
+  }
+
+  if (a.score == null) return 1;
+  if (b.score == null) return -1;
+
+  return b.score - a.score;
+}
+
+function getDashboardDescription(item: WatchlistRow) {
+  if (item.description) {
+    return item.description;
+  }
+
+  if (item.sector && item.industry) {
+    return `${item.company} pertenece al sector ${item.sector} y opera principalmente en la industria ${item.industry}.`;
+  }
+
+  if (item.sector) {
+    return `${item.company} pertenece al sector ${item.sector}.`;
+  }
+
+  return `${item.company} (${item.ticker}) forma parte de tu lista de seguimiento.`;
+}
+
+function formatDashboardPrice(
+  value?: number | null,
+  currency?: string | null
+) {
+  if (value == null) return '—';
+
+  const safeCurrency = currency || 'USD';
+
+  return `${safeCurrency} ${value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatDashboardLarge(value?: number | null) {
+  if (value == null) return '—';
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)} T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)} B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)} M`;
+  return `$${value.toLocaleString('en-US')}`;
 }
 
 /*
