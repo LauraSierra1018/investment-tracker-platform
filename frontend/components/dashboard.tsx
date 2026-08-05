@@ -156,141 +156,243 @@ export function Dashboard() {
    * ========================================================
    */
 
-  async function loadWatchlist() {
-    if (!user) {
-      setWatchlist([]);
-      return;
-    }
+async function loadWatchlist() {
+  if (!user) {
+    setWatchlist([]);
+    return;
+  }
 
-    setWatchlistLoading(true);
+  setWatchlistLoading(true);
 
-    try {
-      const saved =
-        await api<WatchlistItem[]>(
-          '/watchlist'
-        );
+  try {
+    const saved = await api<WatchlistItem[]>('/watchlist');
 
-      const rows = await Promise.all(
-        saved.map(async (item) => {
-          try {
-            const stock =
-              await api<any>(
-                `/stocks/${encodeURIComponent(
-                  item.ticker
-                )}`
-              );
+    const previousByTicker = new Map(
+      watchlist.map((item) => [
+        item.ticker.toUpperCase(),
+        item,
+      ])
+    );
 
-            const price =
-              stock.price != null
-                ? Number(stock.price)
-                : null;
+    const baseRows: WatchlistRow[] = saved.map((item) => {
+      const ticker = item.ticker.toUpperCase();
+      const previous = previousByTicker.get(ticker);
 
-            const target =
-              stock.target_price != null
-                ? Number(stock.target_price)
-                : null;
+      return (
+        previous ?? {
+          ticker,
+          company: ticker,
+          description: null,
+          sector: null,
+          industry: null,
+          score: null,
+          classification: null,
+          price: null,
+          target_price: null,
+          upside_percent: null,
+          pe_ratio: null,
+          market_cap: null,
+          revenue: null,
+          free_float_percent: null,
+          change_percent: null,
+          currency: 'USD',
+        }
+      );
+    });
 
-            const upside =
-              stock.upside_percent ??
-              stock.upside_pct ??
-              (
-                price != null &&
-                price > 0 &&
-                target != null
-                  ? ((target - price) / price) * 100
-                  : null
-              );
+    setWatchlist(
+      [...baseRows].sort(compareDashboardRows)
+    );
 
-            return {
-              ticker: stock.ticker,
-              company: stock.company,
+    const updatedRows: WatchlistRow[] = [];
 
-              description:
-                stock.description ?? null,
+    const batchSize = 3;
 
-              sector:
-                stock.sector ?? null,
+    for (
+      let start = 0;
+      start < saved.length;
+      start += batchSize
+    ) {
+      const batch = saved.slice(
+        start,
+        start + batchSize
+      );
 
-              industry:
-                stock.industry ?? null,
+      const results = await Promise.allSettled(
+        batch.map((item) =>
+          api<any>(
+            `/stocks/${encodeURIComponent(
+              item.ticker
+            )}`
+          )
+        )
+      );
 
-              score:
-                stock.score != null
-                  ? Number(stock.score)
-                  : null,
+      results.forEach((result, index) => {
+        const savedItem = batch[index];
+        const ticker =
+          savedItem.ticker.toUpperCase();
 
-              classification:
-                stock.classification ?? null,
+        const previous =
+          previousByTicker.get(ticker);
 
-              price,
-              target_price: target,
-              upside_percent:
-                upside != null
-                  ? Number(upside)
-                  : null,
+        if (result.status === 'fulfilled') {
+          const stock = result.value;
 
-              pe_ratio:
-                stock.pe_ratio != null
-                  ? Number(stock.pe_ratio)
-                  : null,
+          const price =
+            stock.price != null
+              ? Number(stock.price)
+              : null;
 
-              market_cap:
-                stock.market_cap != null
-                  ? Number(stock.market_cap)
-                  : null,
+          const target =
+            stock.target_price != null
+              ? Number(stock.target_price)
+              : null;
 
-              revenue:
-                stock.revenue != null
-                  ? Number(stock.revenue)
-                  : null,
-
-              free_float_percent:
-                stock.free_float_percent != null
-                  ? Number(stock.free_float_percent)
-                  : null,
-
-              change_percent:
-                stock.change_percent ??
-                stock.daily_change_percent ??
-                stock.regular_market_change_percent ??
-                null,
-
-              currency:
-                stock.currency ?? 'USD',
-            } as WatchlistRow;
-          } catch (error) {
-            console.error(
-              `No fue posible cargar ${item.ticker}`,
-              error
+          const upside =
+            stock.upside_percent ??
+            stock.upside_pct ??
+            (
+              price != null &&
+              price > 0 &&
+              target != null
+                ? ((target - price) / price) * 100
+                : null
             );
 
-            return {
-              ticker: item.ticker,
-              company: item.ticker,
+          updatedRows.push({
+            ticker:
+              stock.ticker ?? ticker,
+
+            company:
+              stock.company ?? ticker,
+
+            description:
+              stock.description ?? null,
+
+            sector:
+              stock.sector ?? null,
+
+            industry:
+              stock.industry ?? null,
+
+            score:
+              stock.score != null
+                ? Number(stock.score)
+                : null,
+
+            classification:
+              stock.classification ?? null,
+
+            price,
+
+            target_price: target,
+
+            upside_percent:
+              upside != null
+                ? Number(upside)
+                : null,
+
+            pe_ratio:
+              stock.pe_ratio != null
+                ? Number(stock.pe_ratio)
+                : null,
+
+            market_cap:
+              stock.market_cap != null
+                ? Number(stock.market_cap)
+                : null,
+
+            revenue:
+              stock.revenue != null
+                ? Number(stock.revenue)
+                : null,
+
+            free_float_percent:
+              stock.free_float_percent != null
+                ? Number(
+                    stock.free_float_percent
+                  )
+                : null,
+
+            change_percent:
+              stock.change_percent ??
+              stock.daily_change_percent ??
+              stock.regular_market_change_percent ??
+              null,
+
+            currency:
+              stock.currency ?? 'USD',
+          });
+        } else {
+          console.error(
+            `No fue posible actualizar ${ticker}:`,
+            result.reason
+          );
+
+          updatedRows.push(
+            previous ?? {
+              ticker,
+              company: ticker,
+              description: null,
+              sector: null,
+              industry: null,
               score: null,
+              classification: null,
               price: null,
               target_price: null,
               upside_percent: null,
+              pe_ratio: null,
+              market_cap: null,
+              revenue: null,
+              free_float_percent: null,
               change_percent: null,
               currency: 'USD',
-            } as WatchlistRow;
-          }
-        })
+            }
+          );
+        }
+      });
+
+      const remainingRows = baseRows.filter(
+        (base) =>
+          !updatedRows.some(
+            (updated) =>
+              updated.ticker === base.ticker
+          )
       );
 
-      rows.sort(compareDashboardRows);
-      setWatchlist(rows);
-    } catch (error) {
-      console.error(
-        'Error cargando watchlist:',
-        error
-      );
+      const partialRows = [
+        ...updatedRows,
+        ...remainingRows,
+      ].sort(compareDashboardRows);
 
-      setWatchlist([]);
-    } finally {
-      setWatchlistLoading(false);
+      setWatchlist(partialRows);
+
+      if (start + batchSize < saved.length) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 500);
+        });
+      }
     }
+
+    setWatchlist(
+      [...updatedRows].sort(
+        compareDashboardRows
+      )
+    );
+  } catch (error) {
+    console.error(
+      'Error cargando watchlist:',
+      error
+    );
+
+    setError(
+      'No fue posible actualizar todos los datos de la watchlist. Se conserva la última información disponible.'
+    );
+  } finally {
+    setWatchlistLoading(false);
   }
+}
 
   /*
    * ========================================================
@@ -357,7 +459,7 @@ export function Dashboard() {
     const interval =
       window.setInterval(() => {
         loadDashboard();
-      }, 30000);
+      }, 300000);
 
     return () => {
       window.clearInterval(interval);
