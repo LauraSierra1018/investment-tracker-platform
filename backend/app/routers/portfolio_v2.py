@@ -21,7 +21,10 @@ from ..services.snaptrade_service import (
     connection_portal,
     sync_portfolio,
 )
-from ..services.broker_sync_guard import sync_snaptrade_preserving_imports
+from ..services.broker_sync_guard import (
+    combined_broker_status,
+    sync_snaptrade_preserving_imports,
+)
 
 
 router = APIRouter(
@@ -128,7 +131,11 @@ def snaptrade_status(
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return broker_status(db, user.id)
+    return combined_broker_status(
+        db,
+        user.id,
+        broker_status,
+    )
 
 
 @router.post("/broker/connect")
