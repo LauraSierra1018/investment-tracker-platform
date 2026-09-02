@@ -10,16 +10,17 @@ import pandas as pd
 import yfinance as yf
 from fastapi import HTTPException
 
+from .market_snapshot import load_snapshot, save_snapshot
 from .scoring import evaluate
 
-INFO_TTL_SECONDS = 6 * 60 * 60
-QUOTE_TTL_SECONDS = 10 * 60
-HISTORY_TTL_SECONDS = 60 * 60
-SEARCH_TTL_SECONDS = 15 * 60
+INFO_TTL_SECONDS = 12 * 60 * 60
+QUOTE_TTL_SECONDS = 15 * 60
+HISTORY_TTL_SECONDS = 6 * 60 * 60
+SEARCH_TTL_SECONDS = 60 * 60
 RATE_LIMIT_COOLDOWN_SECONDS = 5 * 60
-MAX_STALE_INFO_SECONDS = 7 * 24 * 60 * 60
-MAX_STALE_QUOTE_SECONDS = 24 * 60 * 60
-MAX_STALE_HISTORY_SECONDS = 7 * 24 * 60 * 60
+MAX_STALE_INFO_SECONDS = 30 * 24 * 60 * 60
+MAX_STALE_QUOTE_SECONDS = 7 * 24 * 60 * 60
+MAX_STALE_HISTORY_SECONDS = 30 * 24 * 60 * 60
 
 _cache_lock = threading.RLock()
 _info_cache: dict[str, dict[str, Any]] = {}
@@ -119,20 +120,25 @@ def _normalize_symbol(ticker: str) -> str:
     return symbol
 
 
+def _persistent_stock(symbol: str, max_age: int | None = None):
+    data = load_snapshot("stock", symbol, max_age)
+    return dict(data) if isinstance(data, dict) else None
+
+
+def _persistent_history(symbol: str, period: str, max_age: int | None = None):
+    data = load_snapshot("history", f"{symbol}:{period}", max_age)
+    return data if isinstance(data, list) else None
+
+
 def _fetch_info(symbol: str) -> dict[str, Any]:
     if _circuit_open():
-        stale = _cache_get_stale(
-            _info_cache,
-            symbol,
-            MAX_STALE_INFO_SECONDS,
-        )
+        stale = _cache_get_stale(_info_cache, symbol, MAX_STALE_INFO_SECONDS)
         if stale is not None:
             return {**stale, "_stale": True}
-        raise HTTPException(
-            503,
-            "La fuente de mercado está limitando temporalmente las consultas. "
-            "Intenta nuevamente en unos minutos.",
-        )
+        persisted = _persistent_stock(symbol, MAX_STALE_INFO_SECONDS)
+        if persisted:
+            return {"_persistent_stock": persisted, "_stale": True}
+        raise HTTPException(503, "La fuente de mercado está limitada temporalmente, pero no hay datos previos disponibles para este activo.")
 
     try:
         info = yf.Ticker(symbol).info or {}
@@ -142,32 +148,22 @@ def _fetch_info(symbol: str) -> dict[str, Any]:
         return info
     except Exception as exc:
         _register_rate_limit(exc)
-        stale = _cache_get_stale(
-            _info_cache,
-            symbol,
-            MAX_STALE_INFO_SECONDS,
-        )
+        stale = _cache_get_stale(_info_cache, symbol, MAX_STALE_INFO_SECONDS)
         if stale is not None:
             return {**stale, "_stale": True}
+        persisted = _persistent_stock(symbol, MAX_STALE_INFO_SECONDS)
+        if persisted:
+            return {"_persistent_stock": persisted, "_stale": True}
         if _looks_like_rate_limit(exc):
-            raise HTTPException(
-                503,
-                "La fuente de mercado está limitando temporalmente las consultas. "
-                "Intenta nuevamente en unos minutos.",
-            )
-        raise HTTPException(
-            502,
-            f"No fue posible consultar la fuente de mercado: {exc}",
-        )
+            raise HTTPException(503, "La fuente de mercado está limitada temporalmente, pero no hay datos previos disponibles para este activo.")
+        raise HTTPException(502, f"No fue posible consultar la fuente de mercado: {exc}")
 
 
 def _get_info(symbol: str) -> dict[str, Any]:
     fresh = _cache_get(_info_cache, symbol, INFO_TTL_SECONDS)
     if fresh is not None:
         return fresh
-
     lock = _get_symbol_lock(f"info:{symbol}")
-
     with lock:
         fresh = _cache_get(_info_cache, symbol, INFO_TTL_SECONDS)
         return fresh if fresh is not None else _fetch_info(symbol)
@@ -176,7 +172,6 @@ def _get_info(symbol: str) -> dict[str, Any]:
 def _extract_quote(df: pd.DataFrame, symbol: str):
     if df is None or df.empty:
         return None
-
     try:
         if isinstance(df.columns, pd.MultiIndex):
             if ("Close", symbol) in df.columns:
@@ -191,73 +186,57 @@ def _extract_quote(df: pd.DataFrame, symbol: str):
             return None
     except Exception:
         return None
-
     close = close.dropna()
-
     if close.empty:
         return None
-
     price = safe_num(close.iloc[-1])
     previous_close = safe_num(close.iloc[-2]) if len(close) >= 2 else None
-
-    change_percent = (
-        ((price - previous_close) / previous_close * 100)
-        if price is not None and previous_close not in (None, 0)
-        else None
-    )
-
-    return {
-        "price": price,
-        "previous_close": previous_close,
-        "change_percent": change_percent,
-    }
+    change_percent = (((price - previous_close) / previous_close * 100) if price is not None and previous_close not in (None, 0) else None)
+    return {"price": price, "previous_close": previous_close, "change_percent": change_percent}
 
 
 def _fetch_quote(symbol: str) -> dict[str, Any]:
     if _circuit_open():
-        stale = _cache_get_stale(
-            _quote_cache,
-            symbol,
-            MAX_STALE_QUOTE_SECONDS,
-        )
-        return {**stale, "_stale": True} if stale is not None else {}
-
+        stale = _cache_get_stale(_quote_cache, symbol, MAX_STALE_QUOTE_SECONDS)
+        if stale is not None:
+            return {**stale, "_stale": True}
+        persisted = _persistent_stock(symbol, MAX_STALE_QUOTE_SECONDS)
+        if persisted:
+            return {
+                "price": persisted.get("price"),
+                "previous_close": persisted.get("previous_close"),
+                "change_percent": persisted.get("change_percent"),
+                "_stale": True,
+            }
+        return {}
     try:
-        df = yf.download(
-            symbol,
-            period="5d",
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            threads=False,
-        )
-
+        df = yf.download(symbol, period="5d", interval="1d", auto_adjust=True, progress=False, threads=False)
         quote = _extract_quote(df, symbol)
-
         if quote:
             _cache_set(_quote_cache, symbol, quote)
             return quote
-
         return {}
     except Exception as exc:
         _register_rate_limit(exc)
-
-        stale = _cache_get_stale(
-            _quote_cache,
-            symbol,
-            MAX_STALE_QUOTE_SECONDS,
-        )
-
-        return {**stale, "_stale": True} if stale is not None else {}
+        stale = _cache_get_stale(_quote_cache, symbol, MAX_STALE_QUOTE_SECONDS)
+        if stale is not None:
+            return {**stale, "_stale": True}
+        persisted = _persistent_stock(symbol, MAX_STALE_QUOTE_SECONDS)
+        if persisted:
+            return {
+                "price": persisted.get("price"),
+                "previous_close": persisted.get("previous_close"),
+                "change_percent": persisted.get("change_percent"),
+                "_stale": True,
+            }
+        return {}
 
 
 def _get_quote(symbol: str) -> dict[str, Any]:
     fresh = _cache_get(_quote_cache, symbol, QUOTE_TTL_SECONDS)
     if fresh is not None:
         return fresh
-
     lock = _get_symbol_lock(f"quote:{symbol}")
-
     with lock:
         fresh = _cache_get(_quote_cache, symbol, QUOTE_TTL_SECONDS)
         return fresh if fresh is not None else _fetch_quote(symbol)
@@ -266,58 +245,40 @@ def _get_quote(symbol: str) -> dict[str, Any]:
 def get_stock(ticker: str):
     symbol = _normalize_symbol(ticker)
 
-    info = dict(_get_info(symbol))
-    quote = dict(_get_quote(symbol))
+    persisted_fresh = _persistent_stock(symbol, QUOTE_TTL_SECONDS)
+    if persisted_fresh:
+        persisted_fresh["stale"] = False
+        persisted_fresh["warning"] = None
+        persisted_fresh["source"] = persisted_fresh.get("source") or "Persistent market cache"
+        return persisted_fresh
 
+    info = dict(_get_info(symbol))
+    persistent_fallback = info.pop("_persistent_stock", None)
+    if persistent_fallback:
+        persistent_fallback["stale"] = True
+        persistent_fallback["warning"] = "La fuente de mercado está limitada temporalmente. Se muestran los últimos datos persistidos disponibles."
+        persistent_fallback["source"] = persistent_fallback.get("source") or "Persistent market cache"
+        return persistent_fallback
+
+    quote = dict(_get_quote(symbol))
     info_stale = bool(info.pop("_stale", False))
     quote_stale = bool(quote.pop("_stale", False))
 
-    price = safe_num(
-        quote.get("price")
-        or info.get("currentPrice")
-        or info.get("regularMarketPrice")
-        or info.get("previousClose")
-    )
-
-    previous_close = safe_num(
-        quote.get("previous_close")
-        or info.get("previousClose")
-        or info.get("regularMarketPreviousClose")
-    )
-
+    price = safe_num(quote.get("price") or info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"))
+    previous_close = safe_num(quote.get("previous_close") or info.get("previousClose") or info.get("regularMarketPreviousClose"))
     change_percent = safe_num(quote.get("change_percent"))
-
-    if (
-        change_percent is None
-        and price is not None
-        and previous_close not in (None, 0)
-    ):
-        change_percent = (
-            (price - previous_close) / previous_close
-        ) * 100
+    if change_percent is None and price is not None and previous_close not in (None, 0):
+        change_percent = ((price - previous_close) / previous_close) * 100
 
     target = safe_num(info.get("targetMeanPrice"))
     shares = safe_num(info.get("sharesOutstanding"))
     float_shares = safe_num(info.get("floatShares"))
-
-    free_float = (
-        (float_shares / shares * 100)
-        if shares and float_shares
-        else None
-    )
-
-    upside = (
-        ((target - price) / price * 100)
-        if target is not None and price not in (None, 0)
-        else None
-    )
+    free_float = ((float_shares / shares * 100) if shares and float_shares else None)
+    upside = (((target - price) / price * 100) if target is not None and price not in (None, 0) else None)
 
     metrics = {
         "market_cap_b": safe_num(info.get("marketCap"), 1e9),
-        "pe_ratio": safe_num(
-            info.get("trailingPE")
-            or info.get("forwardPE")
-        ),
+        "pe_ratio": safe_num(info.get("trailingPE") or info.get("forwardPE")),
         "revenue_m": safe_num(info.get("totalRevenue"), 1e6),
         "free_float_pct": free_float,
         "upside_pct": upside,
@@ -331,32 +292,16 @@ def get_stock(ticker: str):
         "free_cash_flow_m": safe_num(info.get("freeCashflow"), 1e6),
         "beta": safe_num(info.get("beta")),
     }
-
-    score, classification, criteria, strengths, risks, missing = evaluate(
-        metrics
-    )
-
+    score, classification, criteria, strengths, risks, missing = evaluate(metrics)
     stale = info_stale or quote_stale
 
-    return {
+    result = {
         "ticker": symbol,
-        "company": (
-            info.get("longName")
-            or info.get("shortName")
-            or symbol
-        ),
+        "company": info.get("longName") or info.get("shortName") or symbol,
         "description": info.get("longBusinessSummary"),
         "exchange": info.get("exchange"),
         "currency": info.get("currency") or "USD",
-
-        # IMPORTANTE:
-        # Se devuelve el tipo real del activo para poder distinguir
-        # correctamente acciones, ETFs y otros instrumentos.
-        "quote_type": (
-            info.get("quoteType")
-            or info.get("type")
-        ),
-
+        "quote_type": info.get("quoteType") or info.get("type"),
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "price": price,
@@ -388,216 +333,96 @@ def get_stock(ticker: str):
         "strengths": strengths,
         "risks": risks,
         "missing_data": missing,
-        "updated_at": _utc_now(),
+        "updated_at": _utc_now().isoformat(),
         "source": "Yahoo Finance via yfinance",
         "stale": stale,
-        "warning": (
-            "La fuente de mercado limitó temporalmente las consultas. "
-            "Se muestran los últimos datos disponibles."
-            if stale
-            else None
-        ),
+        "warning": ("La fuente de mercado limitó temporalmente las consultas. Se muestran los últimos datos disponibles." if stale else None),
     }
+
+    save_snapshot("stock", symbol, result)
+    return result
 
 
 def search(query: str):
     q = query.strip()
-
     if not q:
         return []
-
     key = q.lower()
-
-    fresh = _cache_get(
-        _search_cache,
-        key,
-        SEARCH_TTL_SECONDS,
-    )
-
+    fresh = _cache_get(_search_cache, key, SEARCH_TTL_SECONDS)
     if fresh is not None:
         return fresh
-
+    persisted = load_snapshot("search", key, SEARCH_TTL_SECONDS)
+    if isinstance(persisted, list):
+        _cache_set(_search_cache, key, persisted)
+        return persisted
     if _circuit_open():
-        stale = _cache_get_stale(
-            _search_cache,
-            key,
-            24 * 60 * 60,
-        )
-
-        if stale is not None:
-            return stale
-
-        return [
-            {
-                "ticker": q.upper(),
-                "name": q.upper(),
-                "exchange": None,
-                "type": "EQUITY",
-            }
-        ]
-
+        persisted = load_snapshot("search", key, 7 * 24 * 60 * 60)
+        if isinstance(persisted, list):
+            return persisted
+        return [{"ticker": q.upper(), "name": q.upper(), "exchange": None, "type": "EQUITY"}]
     try:
-        s = yf.Search(
-            q,
-            max_results=8,
-            news_count=0,
-        )
-
+        s = yf.Search(q, max_results=8, news_count=0)
         quotes = getattr(s, "quotes", []) or []
-
         results = []
-
         for item in quotes:
             symbol = item.get("symbol")
-
             if symbol:
-                results.append(
-                    {
-                        "ticker": symbol,
-                        "name": (
-                            item.get("shortname")
-                            or item.get("longname")
-                            or symbol
-                        ),
-                        "exchange": (
-                            item.get("exchDisp")
-                            or item.get("exchange")
-                        ),
-                        "type": item.get("quoteType"),
-                    }
-                )
-
+                results.append({
+                    "ticker": symbol,
+                    "name": item.get("shortname") or item.get("longname") or symbol,
+                    "exchange": item.get("exchDisp") or item.get("exchange"),
+                    "type": item.get("quoteType"),
+                })
         _cache_set(_search_cache, key, results)
-
+        save_snapshot("search", key, results)
         return results
-
     except Exception as exc:
         _register_rate_limit(exc)
-
-        stale = _cache_get_stale(
-            _search_cache,
-            key,
-            24 * 60 * 60,
-        )
-
-        if stale is not None:
-            return stale
-
-        return [
-            {
-                "ticker": q.upper(),
-                "name": q.upper(),
-                "exchange": None,
-                "type": "EQUITY",
-            }
-        ]
+        persisted = load_snapshot("search", key, 7 * 24 * 60 * 60)
+        if isinstance(persisted, list):
+            return persisted
+        return [{"ticker": q.upper(), "name": q.upper(), "exchange": None, "type": "EQUITY"}]
 
 
 def history(ticker: str, period="1y"):
     symbol = _normalize_symbol(ticker)
-
-    allowed = {
-        "1mo",
-        "3mo",
-        "6mo",
-        "1y",
-        "2y",
-        "5y",
-    }
-
+    allowed = {"1mo", "3mo", "6mo", "1y", "2y", "5y"}
     if period not in allowed:
         period = "1y"
-
     key = (symbol, period)
-
-    fresh = _cache_get(
-        _history_cache,
-        key,
-        HISTORY_TTL_SECONDS,
-    )
-
+    fresh = _cache_get(_history_cache, key, HISTORY_TTL_SECONDS)
     if fresh is not None:
         return fresh
-
-    lock = _get_symbol_lock(
-        f"history:{symbol}:{period}"
-    )
-
+    persisted = _persistent_history(symbol, period, HISTORY_TTL_SECONDS)
+    if persisted is not None:
+        _cache_set(_history_cache, key, persisted)
+        return persisted
+    lock = _get_symbol_lock(f"history:{symbol}:{period}")
     with lock:
-        fresh = _cache_get(
-            _history_cache,
-            key,
-            HISTORY_TTL_SECONDS,
-        )
-
+        fresh = _cache_get(_history_cache, key, HISTORY_TTL_SECONDS)
         if fresh is not None:
             return fresh
-
         if _circuit_open():
-            stale = _cache_get_stale(
-                _history_cache,
-                key,
-                MAX_STALE_HISTORY_SECONDS,
-            )
-
-            if stale is not None:
-                return stale
-
-            raise HTTPException(
-                503,
-                "El histórico no puede actualizarse en este momento. "
-                "Intenta nuevamente en unos minutos.",
-            )
-
+            persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
+            if persisted is not None:
+                return persisted
+            raise HTTPException(503, "El histórico no puede actualizarse en este momento y no hay una copia persistida disponible.")
         try:
-            df = yf.Ticker(symbol).history(
-                period=period,
-                interval="1d",
-                auto_adjust=True,
-            )
+            df = yf.Ticker(symbol).history(period=period, interval="1d", auto_adjust=True)
         except Exception as exc:
             _register_rate_limit(exc)
-
-            stale = _cache_get_stale(
-                _history_cache,
-                key,
-                MAX_STALE_HISTORY_SECONDS,
-            )
-
-            if stale is not None:
-                return stale
-
+            persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
+            if persisted is not None:
+                return persisted
             if _looks_like_rate_limit(exc):
-                raise HTTPException(
-                    503,
-                    "El histórico no puede actualizarse en este momento "
-                    "porque la fuente de mercado limitó temporalmente "
-                    "las consultas.",
-                )
-
-            raise HTTPException(
-                502,
-                f"No fue posible consultar el histórico: {exc}",
-            )
-
+                raise HTTPException(503, "El histórico no puede actualizarse en este momento y no hay una copia persistida disponible.")
+            raise HTTPException(502, f"No fue posible consultar el histórico: {exc}")
         if df is None or df.empty:
-            return []
-
-        result = [
-            {
-                "date": idx.date().isoformat(),
-                "close": round(float(row.Close), 4),
-                "volume": int(row.Volume),
-            }
-            for idx, row in df.iterrows()
-        ]
-
-        _cache_set(
-            _history_cache,
-            key,
-            result,
-        )
-
+            persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
+            return persisted if persisted is not None else []
+        result = [{"date": idx.date().isoformat(), "close": round(float(row.Close), 4), "volume": int(row.Volume)} for idx, row in df.iterrows()]
+        _cache_set(_history_cache, key, result)
+        save_snapshot("history", f"{symbol}:{period}", result)
         return result
 
 
@@ -609,15 +434,8 @@ def clear_market_cache(ticker: str | None = None):
             _history_cache.clear()
             _search_cache.clear()
             return
-
         symbol = ticker.strip().upper()
-
         _info_cache.pop(symbol, None)
         _quote_cache.pop(symbol, None)
-
-        for key in [
-            k
-            for k in _history_cache
-            if k[0] == symbol
-        ]:
+        for key in [k for k in _history_cache if k[0] == symbol]:
             _history_cache.pop(key, None)
