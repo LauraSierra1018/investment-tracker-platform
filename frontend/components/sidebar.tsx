@@ -7,6 +7,7 @@ import {
   BriefcaseBusiness,
   BookOpen,
   LockKeyhole,
+  FileUp,
 } from 'lucide-react';
 
 import { UserMenu } from '@/components/user-menu';
@@ -16,6 +17,7 @@ export type Tab =
   | 'research'
   | 'watchlist'
   | 'portfolio'
+  | 'broker-import'
   | 'criteria';
 
 export function Sidebar({
@@ -53,6 +55,12 @@ export function Sidebar({
       'portfolio',
       'Portafolio',
       BriefcaseBusiness,
+      true,
+    ],
+    [
+      'broker-import',
+      'Importar broker',
+      FileUp,
       true,
     ],
     [
