@@ -11,7 +11,6 @@ import { Dashboard } from '@/components/dashboard';
 import { Research } from '@/components/research';
 import { Watchlist } from '@/components/watchlist';
 import { Portfolio } from '@/components/portfolio';
-import { BrokerImport } from '@/components/broker-import';
 import { Criteria } from '@/components/criteria';
 
 const mobileTabs: {
@@ -35,10 +34,6 @@ const mobileTabs: {
     label: 'Portafolio',
   },
   {
-    id: 'broker-import',
-    label: 'Importar broker',
-  },
-  {
     id: 'criteria',
     label: 'Criterios',
   },
@@ -51,18 +46,12 @@ export default function Page() {
   return (
     <main className="min-h-screen">
       <div className="mx-auto flex max-w-[1600px]">
-        {/* DESKTOP SIDEBAR */}
-
         <Sidebar
           tab={tab}
           setTab={setTab}
         />
 
-        {/* MAIN CONTENT */}
-
         <section className="min-w-0 flex-1 p-5 md:p-8">
-          {/* MOBILE NAVIGATION */}
-
           <div className="mb-5 flex gap-2 overflow-x-auto pb-1 lg:hidden">
             {mobileTabs.map((item) => (
               <button
@@ -85,8 +74,6 @@ export default function Page() {
             ))}
           </div>
 
-          {/* TAB CONTENT */}
-
           {tab === 'dashboard' && (
             <Dashboard />
           )}
@@ -101,10 +88,6 @@ export default function Page() {
 
           {tab === 'portfolio' && (
             <Portfolio />
-          )}
-
-          {tab === 'broker-import' && (
-            <BrokerImport />
           )}
 
           {tab === 'criteria' && (
