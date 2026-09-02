@@ -10,6 +10,7 @@ import {
   ChevronUp,
   CircleDollarSign,
   Edit3,
+  FileUp,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -38,6 +39,7 @@ import {
 import { api } from '@/lib/api';
 import { StockSearch } from '@/components/stock-search';
 import { RequireAuth } from '@/components/require-auth';
+import { BrokerImportPanel } from '@/components/broker-import';
 
 type PortfolioItem = {
   id: number;
@@ -254,11 +256,10 @@ function RealPortfolio() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-
   const [brokerStatus, setBrokerStatus] = useState<BrokerStatus | null>(null);
   const [brokerLoading, setBrokerLoading] = useState(false);
   const [brokerSyncing, setBrokerSyncing] = useState(false);
-
+  const [importOpen, setImportOpen] = useState(false);
 
   async function loadBrokerStatus() {
     try {
@@ -311,15 +312,17 @@ function RealPortfolio() {
   }
 
   async function loadPortfolio() {
-    const status = await loadBrokerStatus();
+    await loadBrokerStatus();
 
-    if (status?.connected) {
+    try {
       const brokerItems = await api<PortfolioItem[]>('/portfolio/broker/positions');
 
       if (brokerItems.length > 0) {
         setItems(brokerItems);
         return;
       }
+    } catch {
+      // Si no existen snapshots externos, conservamos el portafolio manual.
     }
 
     const result = await api<PortfolioItem[]>('/portfolio');
@@ -593,19 +596,18 @@ function RealPortfolio() {
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-black">Broker conectado</h2>
+                <h2 className="text-xl font-black">Conectar / importar portafolio</h2>
                 <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-700">
                   Solo lectura
                 </span>
               </div>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-                SnapTrade se usa únicamente para leer cuentas, posiciones y efectivo.
-                Investment Research AI no crea, modifica ni cancela órdenes.
+                Conecta un broker compatible mediante SnapTrade o importa un estado de cuenta PDF, CSV o Excel de Hapi, Trii, Tyba u otro broker. La app solo lee posiciones y nunca crea órdenes.
               </p>
 
               {brokerStatus?.connected && (
                 <p className="mt-2 text-xs font-bold text-slate-400">
-                  {brokerStatus.accounts.length} cuenta(s) conectada(s)
+                  {brokerStatus.accounts.length} cuenta(s) conectada(s) por SnapTrade
                   {brokerStatus.connections?.[0]?.name
                     ? ` · ${brokerStatus.connections[0].name}`
                     : ''}
@@ -615,48 +617,72 @@ function RealPortfolio() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {!brokerStatus?.configured ? (
-              <span className="rounded-xl bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800">
-                Falta configurar SnapTrade en backend
-              </span>
-            ) : !brokerStatus?.connected ? (
-              <button
-                onClick={connectBroker}
-                disabled={brokerLoading}
-                className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-black text-white disabled:opacity-60"
-              >
-                {brokerLoading ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Link2 size={16} />
-                )}
-                Conectar broker
-              </button>
-            ) : (
-              <>
+            {brokerStatus?.configured ? (
+              !brokerStatus?.connected ? (
                 <button
                   onClick={connectBroker}
                   disabled={brokerLoading}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black"
+                  className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-black text-white disabled:opacity-60"
                 >
-                  <Plus size={16} />
-                  Añadir broker
+                  {brokerLoading ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Link2 size={16} />
+                  )}
+                  Conectar con SnapTrade
                 </button>
-                <button
-                  onClick={syncBroker}
-                  disabled={brokerSyncing}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"
-                >
-                  <RefreshCw
-                    size={16}
-                    className={brokerSyncing ? 'animate-spin' : ''}
-                  />
-                  {brokerSyncing ? 'Sincronizando...' : 'Sincronizar'}
-                </button>
-              </>
+              ) : (
+                <>
+                  <button
+                    onClick={connectBroker}
+                    disabled={brokerLoading}
+                    className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black"
+                  >
+                    <Plus size={16} />
+                    Añadir broker
+                  </button>
+                  <button
+                    onClick={syncBroker}
+                    disabled={brokerSyncing}
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"
+                  >
+                    <RefreshCw
+                      size={16}
+                      className={brokerSyncing ? 'animate-spin' : ''}
+                    />
+                    {brokerSyncing ? 'Sincronizando...' : 'Sincronizar'}
+                  </button>
+                </>
+              )
+            ) : (
+              <span className="rounded-xl bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800">
+                SnapTrade no configurado
+              </span>
             )}
+
+            <button
+              onClick={() => setImportOpen((current) => !current)}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-black text-indigo-700 hover:bg-indigo-100"
+            >
+              <FileUp size={16} />
+              {importOpen ? 'Cerrar importador' : 'Importar archivo'}
+            </button>
           </div>
         </div>
+
+        {importOpen && (
+          <div className="mt-6 border-t pt-6">
+            <BrokerImportPanel
+              embedded
+              onClose={() => setImportOpen(false)}
+              onImported={async () => {
+                setSuccess('Portafolio importado correctamente.');
+                setImportOpen(false);
+                await loadAll(true);
+              }}
+            />
+          </div>
+        )}
       </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
