@@ -7,7 +7,6 @@ import {
   BriefcaseBusiness,
   BookOpen,
   LockKeyhole,
-  FileUp,
 } from 'lucide-react';
 
 import { UserMenu } from '@/components/user-menu';
@@ -17,7 +16,6 @@ export type Tab =
   | 'research'
   | 'watchlist'
   | 'portfolio'
-  | 'broker-import'
   | 'criteria';
 
 export function Sidebar({
@@ -58,12 +56,6 @@ export function Sidebar({
       true,
     ],
     [
-      'broker-import',
-      'Importar broker',
-      FileUp,
-      true,
-    ],
-    [
       'criteria',
       'Criterios',
       BookOpen,
@@ -73,9 +65,6 @@ export function Sidebar({
 
   return (
     <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r bg-white p-6 lg:flex">
-
-      {/* LOGO */}
-
       <div>
         <div className="text-xs font-bold tracking-[.25em] text-slate-400">
           INVESTMENT
@@ -85,8 +74,6 @@ export function Sidebar({
           Research AI
         </div>
       </div>
-
-      {/* NAVIGATION */}
 
       <nav className="mt-10 space-y-2">
         {links.map(
@@ -128,10 +115,7 @@ export function Sidebar({
         )}
       </nav>
 
-      {/* INFO */}
-
       <div className="mt-auto">
-
         <div className="mb-4 rounded-xl bg-slate-50 p-3">
           <p className="text-xs font-bold text-slate-700">
             Tu cuenta
@@ -143,8 +127,6 @@ export function Sidebar({
             portafolio.
           </p>
         </div>
-
-        {/* LOGIN / USER */}
 
         <div className="border-t pt-4">
           <UserMenu />
