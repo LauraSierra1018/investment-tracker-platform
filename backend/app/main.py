@@ -41,16 +41,13 @@ def ai_analysis(body:AiRequest): return analyze(body.ticker)
     response_model=list[WatchlistOut],
 )
 def watchlist(
-    user: AuthUser = Depends(
-        get_current_user
-    ),
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     statement = (
         select(WatchlistItem)
         .where(
-            WatchlistItem.user_id
-            == user.id
+            WatchlistItem.user_id == user.id
         )
         .order_by(
             WatchlistItem.created_at.desc()
@@ -60,7 +57,6 @@ def watchlist(
     return list(
         db.scalars(statement)
     )
-
 
 @app.post(
     "/watchlist",

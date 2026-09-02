@@ -17,10 +17,6 @@ import {
   Target,
   Trash2,
   Wallet,
-  FlaskConical,
-  Link2,
-  LockKeyhole,
-  Plus,
 } from 'lucide-react';
 
 import {
@@ -49,37 +45,6 @@ type PortfolioItem = {
   market_value?: number | null;
   unrealized_pnl?: number | null;
   unrealized_pnl_percent?: number | null;
-  read_only?: boolean;
-  source?: string;
-  account_id?: string | null;
-};
-
-
-type BrokerStatus = {
-  configured: boolean;
-  registered: boolean;
-  connected: boolean;
-  read_only: boolean;
-  connections: {
-    id?: string | null;
-    name?: string | null;
-    disabled?: boolean | null;
-  }[];
-  accounts: {
-    id?: string | null;
-    name?: string | null;
-    number?: string | null;
-    institution_name?: string | null;
-    account_category?: string | null;
-  }[];
-};
-
-type BrokerSyncResponse = {
-  synced: boolean;
-  read_only: boolean;
-  accounts: number;
-  positions: number;
-  synced_at?: string;
 };
 
 type Analysis = {
@@ -90,7 +55,6 @@ type Analysis = {
     pnl_percent: number;
     positions: number;
     sectors: number;
-    source?: string;
   };
   health: {
     diversification_score: number;
@@ -181,41 +145,6 @@ export function Portfolio() {
 }
 
 function PortfolioContent() {
-  const [mode, setMode] = useState<'real' | 'lab'>('real');
-
-  useEffect(() => {
-    const preferred = localStorage.getItem('portfolio-preferred-mode');
-    if (preferred === 'lab') {
-      setMode('lab');
-      localStorage.removeItem('portfolio-preferred-mode');
-    }
-  }, []);
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-400">Inversiones</p>
-          <h1 className="mt-1 text-3xl font-black">Portfolio</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-            Separa tus inversiones reales de los escenarios que quieras probar antes de tomar una decisión.
-          </p>
-        </div>
-        <div className="flex rounded-2xl border bg-white p-1 shadow-sm">
-          <button onClick={() => setMode('real')} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${mode === 'real' ? 'bg-slate-950 text-white' : 'text-slate-500'}`}>
-            <Wallet size={16} /> Real Portfolio
-          </button>
-          <button onClick={() => setMode('lab')} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${mode === 'lab' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
-            <FlaskConical size={16} /> Portfolio Lab
-          </button>
-        </div>
-      </div>
-      {mode === 'real' ? <RealPortfolio /> : <PortfolioLab />}
-    </div>
-  );
-}
-
-function RealPortfolio() {
   const [items, setItems] = useState<PortfolioItem[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
@@ -254,74 +183,7 @@ function RealPortfolio() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-
-  const [brokerStatus, setBrokerStatus] = useState<BrokerStatus | null>(null);
-  const [brokerLoading, setBrokerLoading] = useState(false);
-  const [brokerSyncing, setBrokerSyncing] = useState(false);
-
-
-  async function loadBrokerStatus() {
-    try {
-      const status = await api<BrokerStatus>('/portfolio/broker/status');
-      setBrokerStatus(status);
-      return status;
-    } catch {
-      setBrokerStatus(null);
-      return null;
-    }
-  }
-
-  async function connectBroker() {
-    setBrokerLoading(true);
-    setError('');
-
-    try {
-      const result = await api<{ url: string; connection_type: 'read' }>(
-        '/portfolio/broker/connect',
-        { method: 'POST' }
-      );
-
-      window.location.href = result.url;
-    } catch (e: any) {
-      setError(e?.message || 'No fue posible iniciar la conexión con el broker.');
-      setBrokerLoading(false);
-    }
-  }
-
-  async function syncBroker() {
-    setBrokerSyncing(true);
-    setError('');
-
-    try {
-      const result = await api<BrokerSyncResponse>(
-        '/portfolio/broker/sync',
-        { method: 'POST' }
-      );
-
-      setSuccess(
-        `Broker sincronizado: ${result.positions} posiciones en ${result.accounts} cuenta(s).`
-      );
-
-      await loadAll(true);
-    } catch (e: any) {
-      setError(e?.message || 'No fue posible sincronizar el broker.');
-    } finally {
-      setBrokerSyncing(false);
-    }
-  }
-
   async function loadPortfolio() {
-    const status = await loadBrokerStatus();
-
-    if (status?.connected) {
-      const brokerItems = await api<PortfolioItem[]>('/portfolio/broker/positions');
-
-      if (brokerItems.length > 0) {
-        setItems(brokerItems);
-        return;
-      }
-    }
-
     const result = await api<PortfolioItem[]>('/portfolio');
     setItems(result);
   }
@@ -451,7 +313,6 @@ function RealPortfolio() {
   }
 
   function startEdit(item: PortfolioItem) {
-    if (item.read_only) return;
     setEditing(item);
     setEditQuantity(String(item.quantity));
     setEditAverageCost(String(item.average_cost));
@@ -486,7 +347,6 @@ function RealPortfolio() {
   }
 
   async function removePosition(item: PortfolioItem) {
-    if (item.read_only) return;
     if (!window.confirm(`¿Eliminar ${item.ticker} del portafolio?`)) return;
 
     try {
@@ -556,7 +416,7 @@ function RealPortfolio() {
             </span>
           </div>
           <p className="mt-2 text-sm text-slate-500">
-            Rendimiento, riesgo y diversificación de tu portafolio real.
+            Rendimiento, riesgo, diversificación y oportunidades desde tu watchlist.
           </p>
         </div>
 
@@ -584,80 +444,6 @@ function RealPortfolio() {
           {success}
         </div>
       )}
-
-      <section className="card p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-sky-50 p-3">
-              <Link2 className="text-sky-600" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-black">Broker conectado</h2>
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-700">
-                  Solo lectura
-                </span>
-              </div>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-                SnapTrade se usa únicamente para leer cuentas, posiciones y efectivo.
-                Investment Research AI no crea, modifica ni cancela órdenes.
-              </p>
-
-              {brokerStatus?.connected && (
-                <p className="mt-2 text-xs font-bold text-slate-400">
-                  {brokerStatus.accounts.length} cuenta(s) conectada(s)
-                  {brokerStatus.connections?.[0]?.name
-                    ? ` · ${brokerStatus.connections[0].name}`
-                    : ''}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {!brokerStatus?.configured ? (
-              <span className="rounded-xl bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800">
-                Falta configurar SnapTrade en backend
-              </span>
-            ) : !brokerStatus?.connected ? (
-              <button
-                onClick={connectBroker}
-                disabled={brokerLoading}
-                className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-black text-white disabled:opacity-60"
-              >
-                {brokerLoading ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Link2 size={16} />
-                )}
-                Conectar broker
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={connectBroker}
-                  disabled={brokerLoading}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black"
-                >
-                  <Plus size={16} />
-                  Añadir broker
-                </button>
-                <button
-                  onClick={syncBroker}
-                  disabled={brokerSyncing}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"
-                >
-                  <RefreshCw
-                    size={16}
-                    className={brokerSyncing ? 'animate-spin' : ''}
-                  />
-                  {brokerSyncing ? 'Sincronizando...' : 'Sincronizar'}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Summary
@@ -992,7 +778,7 @@ function RealPortfolio() {
           <div>
             <h2 className="text-xl font-black">AI Portfolio Assistant</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Usa tu portafolio y perfil para explicar ajustes y opciones a investigar.
+              Usa tu portafolio, perfil y watchlist para explicar ajustes y opciones a investigar.
             </p>
           </div>
         </div>
@@ -1122,16 +908,16 @@ function RealPortfolio() {
             <Sparkles className="text-violet-600" />
           </div>
           <div>
-            <h2 className="text-xl font-black">Oportunidades para investigar</h2>
+            <h2 className="text-xl font-black">Opciones desde tu watchlist</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Ranking adaptado a tu perfil. En la siguiente fase ampliaremos los candidatos a todo Research.
+              Ranking cuantitativo adaptado a tu perfil.
             </p>
           </div>
         </div>
 
         {(analysis?.recommendations?.length ?? 0) === 0 ? (
           <div className="mt-6 rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">
-            Todavía no hay candidatos disponibles para este perfil.
+            Guarda activos en tu watchlist para ver candidatos.
           </div>
         ) : (
           <div className="mt-6 grid gap-4 xl:grid-cols-3">
@@ -1256,31 +1042,20 @@ function RealPortfolio() {
                           : '—'}
                       </td>
                       <td className="p-4">
-                        {item.read_only ? (
-                          <div className="flex justify-center">
-                            <span
-                              title="Posición sincronizada desde broker: solo lectura"
-                              className="rounded-lg bg-slate-100 p-2 text-slate-400"
-                            >
-                              <LockKeyhole size={16} />
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex justify-center gap-1">
-                            <button
-                              onClick={() => startEdit(item)}
-                              className="rounded-lg p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
-                            >
-                              <Edit3 size={16} />
-                            </button>
-                            <button
-                              onClick={() => removePosition(item)}
-                              className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex justify-center gap-1">
+                          <button
+                            onClick={() => startEdit(item)}
+                            className="rounded-lg p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button
+                            onClick={() => removePosition(item)}
+                            className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1446,685 +1221,6 @@ function RealPortfolio() {
   );
 }
 
-
-type MockPosition = {
-  id: string;
-  ticker: string;
-  company: string;
-  quantity: number;
-  entryPrice: number;
-  currentPrice: number;
-  currency: string;
-};
-
-type MockPortfolio = {
-  id: string;
-  name: string;
-  startingCapital: number;
-  positions: MockPosition[];
-};
-
-type StockHistoryPoint = {
-  date: string;
-  close: number;
-};
-
-type StockHistoryResponse = {
-  points: {
-    date: string;
-    open?: number | null;
-    high?: number | null;
-    low?: number | null;
-    close: number;
-    volume?: number | null;
-  }[];
-};
-
-type SimulationPoint = {
-  day: number;
-  label: string;
-  bear: number;
-  base: number;
-  bull: number;
-};
-
-type SimulationResult = {
-  startingValue: number;
-  bear: number;
-  base: number;
-  bull: number;
-  probabilityOfGain: number;
-  medianReturnPercent: number;
-  annualizedVolatilityPercent: number;
-  simulations: number;
-  tradingDays: number;
-  points: SimulationPoint[];
-};
-
-function PortfolioLab() {
-  const [portfolios, setPortfolios] = useState<MockPortfolio[]>([]);
-  const [activeId, setActiveId] = useState('');
-  const [name, setName] = useState('');
-  const [capital, setCapital] = useState('10000');
-  const [creating, setCreating] = useState(false);
-  const [selectedStock, setSelectedStock] = useState<StockData | null>(null);
-  const [amount, setAmount] = useState('');
-  const [stockLoading, setStockLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [simulationLoading, setSimulationLoading] = useState(false);
-  const [simulation, setSimulation] = useState<SimulationResult | null>(null);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('mock-portfolios-v1');
-      if (!raw) return;
-      const saved = JSON.parse(raw) as MockPortfolio[];
-      setPortfolios(saved);
-      setActiveId(saved[0]?.id ?? '');
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (portfolios.length) {
-      localStorage.setItem('mock-portfolios-v1', JSON.stringify(portfolios));
-    }
-  }, [portfolios]);
-
-
-  useEffect(() => {
-    const pendingTicker = localStorage.getItem('portfolio-lab-pending-ticker');
-    if (!pendingTicker) return;
-
-    localStorage.removeItem('portfolio-lab-pending-ticker');
-
-    api<StockData>(`/stocks/${encodeURIComponent(pendingTicker)}`)
-      .then((result) => {
-        setSelectedStock(result);
-        setMessage(
-          `${pendingTicker} llegó desde Research. Define el capital ficticio que quieres probar.`
-        );
-      })
-      .catch(() => {
-        setMessage(`No fue posible cargar ${pendingTicker} desde Research.`);
-      });
-  }, []);
-
-  const active = portfolios.find((p) => p.id === activeId) ?? null;
-  const invested = active?.positions.reduce((s, p) => s + p.quantity * p.entryPrice, 0) ?? 0;
-  const positionsValue = active?.positions.reduce((s, p) => s + p.quantity * p.currentPrice, 0) ?? 0;
-  const cash = Math.max((active?.startingCapital ?? 0) - invested, 0);
-  const totalValue = positionsValue + cash;
-  const pnl = totalValue - (active?.startingCapital ?? 0);
-  const pnlPct = active?.startingCapital ? (pnl / active.startingCapital) * 100 : 0;
-
-  const allocation = active?.positions.map((p) => ({
-    ticker: p.ticker,
-    value: p.quantity * p.currentPrice,
-    percent: totalValue > 0 ? (p.quantity * p.currentPrice / totalValue) * 100 : 0,
-  })) ?? [];
-
-  function createMock() {
-    const value = Number(capital);
-    if (value <= 0) return setMessage('Ingresa un capital inicial válido.');
-    const mock: MockPortfolio = {
-      id: String(Date.now()),
-      name: name.trim() || `Escenario ${portfolios.length + 1}`,
-      startingCapital: value,
-      positions: [],
-    };
-    setPortfolios((x) => [...x, mock]);
-    setActiveId(mock.id);
-    setName('');
-    setCapital('10000');
-    setCreating(false);
-    setMessage('Mock portfolio creado.');
-  }
-
-  async function selectStock(ticker: string) {
-    setStockLoading(true);
-    setMessage('');
-    try {
-      setSelectedStock(await api<StockData>(`/stocks/${encodeURIComponent(ticker)}`));
-    } catch (e: any) {
-      setMessage(e?.message || 'No fue posible cargar el activo.');
-    } finally {
-      setStockLoading(false);
-    }
-  }
-
-  function addPosition() {
-    if (!active || !selectedStock || !selectedStock.price) return;
-    const dollars = Number(amount);
-    if (dollars <= 0) return setMessage('Ingresa un monto válido.');
-    if (dollars > cash + 0.01) return setMessage(`Solo tienes ${money(cash)} disponibles en este escenario.`);
-
-    const price = selectedStock.price;
-    const quantity = dollars / price;
-
-    setPortfolios((all) => all.map((portfolio) => {
-      if (portfolio.id !== active.id) return portfolio;
-      const existing = portfolio.positions.find((p) => p.ticker === selectedStock.ticker);
-      if (existing) {
-        const newQty = existing.quantity + quantity;
-        const newCost = (existing.quantity * existing.entryPrice + dollars) / newQty;
-        return {...portfolio, positions: portfolio.positions.map((p) =>
-          p.id === existing.id ? {...p, quantity: newQty, entryPrice: newCost, currentPrice: price} : p
-        )};
-      }
-      return {...portfolio, positions: [...portfolio.positions, {
-        id: `${Date.now()}-${selectedStock.ticker}`,
-        ticker: selectedStock.ticker,
-        company: selectedStock.company,
-        quantity,
-        entryPrice: price,
-        currentPrice: price,
-        currency: selectedStock.currency || 'USD',
-      }]};
-    }));
-
-    setSelectedStock(null);
-    setAmount('');
-    setSimulation(null);
-    setMessage('Activo agregado únicamente al escenario simulado.');
-  }
-
-  function removePosition(id: string) {
-    if (!active) return;
-    setPortfolios((all) => all.map((p) => p.id === active.id ? {...p, positions: p.positions.filter((x) => x.id !== id)} : p));
-    setSimulation(null);
-  }
-
-  async function runOneYearSimulation() {
-    if (!active || active.positions.length === 0) {
-      setMessage('Agrega al menos un activo antes de simular.');
-      return;
-    }
-
-    setSimulationLoading(true);
-    setSimulation(null);
-    setMessage('');
-
-    try {
-      const uniqueTickers = Array.from(
-        new Set(active.positions.map((position) => position.ticker))
-      );
-
-      const historyResults = await Promise.all(
-        uniqueTickers.map(async (ticker) => {
-          const result = await api<StockHistoryResponse>(
-            `/stocks/${encodeURIComponent(ticker)}/history?range=1Y`
-          );
-
-          const cleanPoints = (result.points || [])
-            .filter((point) => Number.isFinite(Number(point.close)) && Number(point.close) > 0)
-            .map((point) => ({
-              date: point.date,
-              close: Number(point.close),
-            }));
-
-          if (cleanPoints.length < 40) {
-            throw new Error(
-              `${ticker} no tiene suficiente histórico para una simulación estable.`
-            );
-          }
-
-          return {
-            ticker,
-            points: cleanPoints,
-          };
-        })
-      );
-
-      const returnsByTicker = new Map<string, Map<string, number>>();
-
-      historyResults.forEach(({ ticker, points }) => {
-        const returns = new Map<string, number>();
-
-        for (let i = 1; i < points.length; i += 1) {
-          const previous = points[i - 1].close;
-          const current = points[i].close;
-
-          if (previous > 0 && current > 0) {
-            returns.set(points[i].date, Math.log(current / previous));
-          }
-        }
-
-        returnsByTicker.set(ticker, returns);
-      });
-
-      const commonDates = Array.from(
-        returnsByTicker.get(uniqueTickers[0])?.keys() ?? []
-      ).filter((date) =>
-        uniqueTickers.every((ticker) => returnsByTicker.get(ticker)?.has(date))
-      );
-
-      if (commonDates.length < 30) {
-        throw new Error(
-          'No hay suficientes fechas comunes entre los activos para estimar su relación histórica.'
-        );
-      }
-
-      const returnMatrix = commonDates.map((date) =>
-        uniqueTickers.map(
-          (ticker) => returnsByTicker.get(ticker)?.get(date) ?? 0
-        )
-      );
-
-      const means = uniqueTickers.map((_, column) =>
-        average(returnMatrix.map((row) => row[column]))
-      );
-
-      const covariance = covarianceMatrix(returnMatrix, means);
-      const cholesky = choleskyDecomposition(covariance);
-
-      const currentPositionValues = active.positions.map(
-        (position) => position.quantity * position.currentPrice
-      );
-
-      const tickerWeight = uniqueTickers.map((ticker) => {
-        const positionValue = active.positions
-          .filter((position) => position.ticker === ticker)
-          .reduce(
-            (sum, position) =>
-              sum + position.quantity * position.currentPrice,
-            0
-          );
-
-        return totalValue > 0 ? positionValue / totalValue : 0;
-      });
-
-      const cashWeight = totalValue > 0 ? cash / totalValue : 0;
-      const portfolioDailyMean = means.reduce(
-        (sum, mean, index) => sum + tickerWeight[index] * mean,
-        0
-      );
-
-      let portfolioDailyVariance = 0;
-      for (let i = 0; i < tickerWeight.length; i += 1) {
-        for (let j = 0; j < tickerWeight.length; j += 1) {
-          portfolioDailyVariance +=
-            tickerWeight[i] *
-            tickerWeight[j] *
-            covariance[i][j];
-        }
-      }
-
-      const annualizedVolatilityPercent =
-        Math.sqrt(Math.max(portfolioDailyVariance, 0)) *
-        Math.sqrt(252) *
-        100;
-
-      const simulationsCount = 10000;
-      const tradingDays = 252;
-      const sampleDays = [0, 21, 42, 63, 84, 105, 126, 147, 168, 189, 210, 231, 252];
-      const sampledValues = sampleDays.map(() => [] as number[]);
-      const endingValues: number[] = [];
-
-      for (let simulationIndex = 0; simulationIndex < simulationsCount; simulationIndex += 1) {
-        const assetValues = [...currentPositionValues];
-
-        sampledValues[0].push(totalValue);
-
-        let samplePointer = 1;
-
-        for (let day = 1; day <= tradingDays; day += 1) {
-          const independentNormals = uniqueTickers.map(() => standardNormal());
-          const correlatedNormals = multiplyLowerTriangular(
-            cholesky,
-            independentNormals
-          );
-
-          uniqueTickers.forEach((ticker, tickerIndex) => {
-            const drift = means[tickerIndex];
-            const shock = correlatedNormals[tickerIndex];
-
-            active.positions.forEach((position, positionIndex) => {
-              if (position.ticker === ticker) {
-                assetValues[positionIndex] *= Math.exp(drift + shock);
-              }
-            });
-          });
-
-          if (samplePointer < sampleDays.length && day === sampleDays[samplePointer]) {
-            sampledValues[samplePointer].push(
-              assetValues.reduce((sum, value) => sum + value, 0) + cash
-            );
-            samplePointer += 1;
-          }
-        }
-
-        endingValues.push(
-          assetValues.reduce((sum, value) => sum + value, 0) + cash
-        );
-      }
-
-      endingValues.sort((a, b) => a - b);
-
-      const bear = percentile(endingValues, 0.05);
-      const base = percentile(endingValues, 0.5);
-      const bull = percentile(endingValues, 0.95);
-
-      const probabilityOfGain =
-        (endingValues.filter((value) => value > totalValue).length /
-          endingValues.length) *
-        100;
-
-      const points = sampleDays.map((day, index) => {
-        const values = sampledValues[index].sort((a, b) => a - b);
-
-        return {
-          day,
-          label: simulationLabel(day),
-          bear: percentile(values, 0.05),
-          base: percentile(values, 0.5),
-          bull: percentile(values, 0.95),
-        };
-      });
-
-      setSimulation({
-        startingValue: totalValue,
-        bear,
-        base,
-        bull,
-        probabilityOfGain,
-        medianReturnPercent:
-          totalValue > 0 ? ((base / totalValue) - 1) * 100 : 0,
-        annualizedVolatilityPercent,
-        simulations: simulationsCount,
-        tradingDays,
-        points,
-      });
-
-      setMessage(
-        `Simulación completada con ${simulationsCount.toLocaleString('en-US')} trayectorias.`
-      );
-    } catch (e: any) {
-      setMessage(
-        e?.message ||
-          'No fue posible ejecutar la simulación con el histórico disponible.'
-      );
-    } finally {
-      setSimulationLoading(false);
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <section className="card p-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex gap-4">
-            <div className="rounded-2xl bg-indigo-50 p-3"><FlaskConical className="text-indigo-600" /></div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-black">Portfolio Lab</h2>
-                <span className="rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-black uppercase text-indigo-700">Simulado</span>
-              </div>
-              <p className="mt-2 text-sm text-slate-500">Prueba acciones y ETFs sin mezclarlos con tu portafolio real.</p>
-            </div>
-          </div>
-          <button onClick={() => setCreating(!creating)} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white">
-            <Plus size={16}/> Nuevo mock portfolio
-          </button>
-        </div>
-
-        {creating && (
-          <div className="mt-5 grid gap-3 rounded-2xl bg-slate-50 p-4 md:grid-cols-[1fr_220px_auto]">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del escenario" className="h-11 rounded-xl border bg-white px-4"/>
-            <input type="number" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="Capital inicial" className="h-11 rounded-xl border bg-white px-4"/>
-            <button onClick={createMock} className="rounded-xl bg-slate-950 px-5 text-sm font-black text-white">Crear</button>
-          </div>
-        )}
-      </section>
-
-      {message && <div className="rounded-xl bg-slate-100 p-4 text-sm font-bold text-slate-600">{message}</div>}
-
-      {!active ? (
-        <section className="card border-dashed p-12 text-center">
-          <FlaskConical className="mx-auto text-indigo-500"/>
-          <h3 className="mt-4 text-xl font-black">Crea tu primer escenario</h3>
-          <p className="mt-2 text-sm text-slate-500">Define capital ficticio y prueba cualquier activo disponible en Research.</p>
-        </section>
-      ) : (
-        <>
-          <section className="card p-4">
-            <div className="flex flex-wrap gap-2">
-              {portfolios.map((p) => (
-                <button key={p.id} onClick={() => setActiveId(p.id)} className={`rounded-xl px-4 py-2 text-sm font-black ${activeId === p.id ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600'}`}>{p.name}</button>
-              ))}
-            </div>
-          </section>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <Summary label="Capital inicial" value={money(active.startingCapital)}/>
-            <Summary label="Valor simulado" value={money(totalValue)}/>
-            <Summary label="P/L simulado" value={`${pnl >= 0 ? '+' : ''}${money(pnl)}`} subtitle={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}/>
-            <Summary label="Efectivo" value={money(cash)}/>
-            <Summary label="Posiciones" value={String(active.positions.length)}/>
-          </div>
-
-          <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-            <section className="card p-6">
-              <h3 className="text-xl font-black">Posiciones simuladas</h3>
-              <p className="mt-1 text-sm text-slate-500">Nunca se envían órdenes a un broker.</p>
-              {active.positions.length === 0 ? <p className="mt-6 text-sm text-slate-500">Todavía no hay posiciones.</p> :
-                <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[650px]">
-                  <thead className="text-[10px] font-black uppercase text-slate-400"><tr><th className="pb-3 text-left">Activo</th><th className="pb-3 text-right">Cantidad</th><th className="pb-3 text-right">Entrada</th><th className="pb-3 text-right">Valor</th><th/></tr></thead>
-                  <tbody className="divide-y">{active.positions.map((p) => <tr key={p.id}>
-                    <td className="py-4"><p className="font-black">{p.ticker}</p><p className="text-xs text-slate-400">{p.company}</p></td>
-                    <td className="py-4 text-right">{p.quantity.toFixed(4)}</td>
-                    <td className="py-4 text-right">{money(p.entryPrice)}</td>
-                    <td className="py-4 text-right font-black">{money(p.quantity * p.currentPrice)}</td>
-                    <td className="py-4 text-right"><button onClick={() => removePosition(p.id)} className="p-2 text-slate-400 hover:text-rose-600"><Trash2 size={15}/></button></td>
-                  </tr>)}</tbody>
-                </table></div>}
-            </section>
-
-            <section className="card p-6">
-              <h3 className="text-xl font-black">Allocation</h3>
-              {allocation.length ? <>
-                <div className="mt-3 h-[220px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={allocation} dataKey="value" nameKey="ticker" innerRadius={58} outerRadius={88}>{allocation.map((x,i)=><Cell key={x.ticker} fill={COLORS[i % COLORS.length]}/>)}</Pie><Tooltip formatter={(v:number)=>money(Number(v))}/></PieChart></ResponsiveContainer></div>
-                <div className="space-y-2">{allocation.map((x)=><div key={x.ticker} className="flex justify-between text-sm"><b>{x.ticker}</b><span>{x.percent.toFixed(1)}%</span></div>)}</div>
-              </> : <p className="mt-6 text-sm text-slate-500">Agrega activos para visualizar la distribución.</p>}
-            </section>
-          </div>
-
-          <div className="grid gap-5 xl:grid-cols-2">
-            <section className="card p-6">
-              <h3 className="text-xl font-black">Probar una inversión</h3>
-              <p className="mt-1 text-sm text-slate-500">Busca cualquier activo disponible en Research.</p>
-              <div className="mt-5"><StockSearch onSelect={selectStock}/></div>
-              {stockLoading && <div className="mt-3 flex gap-2 text-sm text-slate-500"><Loader2 size={16} className="animate-spin"/>Consultando...</div>}
-              {selectedStock && <div className="mt-5 rounded-2xl bg-slate-50 p-5">
-                <div className="flex justify-between"><div><b>{selectedStock.ticker}</b><p className="text-sm text-slate-500">{selectedStock.company}</p></div><b>{selectedStock.price ? money(selectedStock.price) : 'Sin precio'}</b></div>
-                <input type="number" value={amount} onChange={(e)=>setAmount(e.target.value)} placeholder="Capital ficticio, ej. 1000" className="mt-4 h-12 w-full rounded-xl border bg-white px-4"/>
-                <p className="mt-2 text-xs text-slate-400">Disponible: {money(cash)}</p>
-                <button onClick={addPosition} className="mt-4 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white">Agregar al escenario</button>
-              </div>}
-            </section>
-
-            <section className="card p-6">
-              <div className="flex gap-3">
-                <div className="rounded-xl bg-violet-50 p-3">
-                  <Brain className="text-violet-600"/>
-                </div>
-                <div>
-                  <h3 className="text-xl font-black">Simulación a 1 año</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Monte Carlo con histórico de 1 año y 252 sesiones futuras.
-                  </p>
-                </div>
-              </div>
-
-              {!simulation ? (
-                <div className="mt-6 rounded-2xl border border-dashed p-6">
-                  <p className="text-sm leading-6 text-slate-600">
-                    La simulación estima retornos diarios, volatilidad y correlaciones entre
-                    los activos del escenario. Después genera 10.000 trayectorias posibles.
-                  </p>
-
-                  <div className="mt-5 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-xl bg-rose-50 p-3">
-                      <b>Bear</b>
-                      <p className="text-xs">Percentil 5</p>
-                    </div>
-                    <div className="rounded-xl bg-slate-100 p-3">
-                      <b>Base</b>
-                      <p className="text-xs">Mediana</p>
-                    </div>
-                    <div className="rounded-xl bg-emerald-50 p-3">
-                      <b>Bull</b>
-                      <p className="text-xs">Percentil 95</p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={runOneYearSimulation}
-                    disabled={simulationLoading || active.positions.length === 0}
-                    className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
-                  >
-                    {simulationLoading ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        Simulando 10.000 escenarios...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        Simular 1 año
-                      </>
-                    )}
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-6 space-y-5">
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-xl bg-rose-50 p-3">
-                      <p className="text-xs font-black uppercase text-rose-700">Bear · P5</p>
-                      <p className="mt-1 text-lg font-black">{money(simulation.bear)}</p>
-                    </div>
-                    <div className="rounded-xl bg-slate-100 p-3">
-                      <p className="text-xs font-black uppercase text-slate-600">Base · P50</p>
-                      <p className="mt-1 text-lg font-black">{money(simulation.base)}</p>
-                    </div>
-                    <div className="rounded-xl bg-emerald-50 p-3">
-                      <p className="text-xs font-black uppercase text-emerald-700">Bull · P95</p>
-                      <p className="mt-1 text-lg font-black">{money(simulation.bull)}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-                        Prob. terminar arriba
-                      </p>
-                      <p className="mt-1 text-xl font-black">
-                        {simulation.probabilityOfGain.toFixed(1)}%
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-                        Retorno mediano
-                      </p>
-                      <p className={`mt-1 text-xl font-black ${
-                        simulation.medianReturnPercent >= 0
-                          ? 'text-emerald-600'
-                          : 'text-rose-600'
-                      }`}>
-                        {simulation.medianReturnPercent >= 0 ? '+' : ''}
-                        {simulation.medianReturnPercent.toFixed(1)}%
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-                        Volatilidad anualizada
-                      </p>
-                      <p className="mt-1 text-xl font-black">
-                        {simulation.annualizedVolatilityPercent.toFixed(1)}%
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="h-[280px] rounded-2xl border p-3">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={simulation.points}>
-                        <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 10 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tickFormatter={(value) => compactMoney(Number(value))}
-                          tick={{ fontSize: 10 }}
-                          axisLine={false}
-                          tickLine={false}
-                          width={62}
-                        />
-                        <Tooltip
-                          formatter={(value: number, name: string) => [
-                            money(Number(value)),
-                            name === 'bear'
-                              ? 'Bear P5'
-                              : name === 'bull'
-                                ? 'Bull P95'
-                                : 'Base P50',
-                          ]}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="bear"
-                          stroke="currentColor"
-                          strokeOpacity={0.35}
-                          strokeWidth={1.5}
-                          dot={false}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="base"
-                          stroke="currentColor"
-                          strokeWidth={2.5}
-                          dot={false}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="bull"
-                          stroke="currentColor"
-                          strokeOpacity={0.35}
-                          strokeWidth={1.5}
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="rounded-xl bg-amber-50 p-4 text-xs leading-5 text-amber-900">
-                    Esta es una simulación probabilística basada en el comportamiento histórico
-                    de los activos. No es una predicción garantizada ni una recomendación de inversión.
-                  </div>
-
-                  <button
-                    onClick={runOneYearSimulation}
-                    disabled={simulationLoading}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-black disabled:opacity-50"
-                  >
-                    {simulationLoading ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={16} />
-                    )}
-                    Volver a simular
-                  </button>
-                </div>
-              )}
-            </section>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-
 function Summary({
   label,
   value,
@@ -2206,111 +1302,6 @@ function RiskChoice({
     </button>
   );
 }
-
-
-function average(values: number[]) {
-  if (values.length === 0) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function covarianceMatrix(matrix: number[][], means: number[]) {
-  const columns = means.length;
-  const result = Array.from({ length: columns }, () =>
-    Array.from({ length: columns }, () => 0)
-  );
-
-  const denominator = Math.max(matrix.length - 1, 1);
-
-  for (let i = 0; i < columns; i += 1) {
-    for (let j = 0; j < columns; j += 1) {
-      let sum = 0;
-
-      for (const row of matrix) {
-        sum += (row[i] - means[i]) * (row[j] - means[j]);
-      }
-
-      result[i][j] = sum / denominator;
-    }
-  }
-
-  return result;
-}
-
-function choleskyDecomposition(matrix: number[][]) {
-  const n = matrix.length;
-  const lower = Array.from({ length: n }, () =>
-    Array.from({ length: n }, () => 0)
-  );
-
-  for (let i = 0; i < n; i += 1) {
-    for (let j = 0; j <= i; j += 1) {
-      let sum = 0;
-
-      for (let k = 0; k < j; k += 1) {
-        sum += lower[i][k] * lower[j][k];
-      }
-
-      if (i === j) {
-        const adjusted = Math.max(matrix[i][i] - sum, 1e-10);
-        lower[i][j] = Math.sqrt(adjusted);
-      } else {
-        const denominator = Math.max(lower[j][j], 1e-10);
-        lower[i][j] = (matrix[i][j] - sum) / denominator;
-      }
-    }
-  }
-
-  return lower;
-}
-
-function multiplyLowerTriangular(matrix: number[][], vector: number[]) {
-  return matrix.map((row, rowIndex) => {
-    let sum = 0;
-
-    for (let column = 0; column <= rowIndex; column += 1) {
-      sum += row[column] * vector[column];
-    }
-
-    return sum;
-  });
-}
-
-function standardNormal() {
-  let u = 0;
-  let v = 0;
-
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-}
-
-function percentile(sortedValues: number[], probability: number) {
-  if (sortedValues.length === 0) return 0;
-
-  const position = (sortedValues.length - 1) * probability;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-
-  if (lower === upper) return sortedValues[lower];
-
-  const weight = position - lower;
-
-  return (
-    sortedValues[lower] * (1 - weight) +
-    sortedValues[upper] * weight
-  );
-}
-
-function simulationLabel(day: number) {
-  if (day === 0) return 'Hoy';
-
-  const months = Math.round(day / 21);
-
-  if (months >= 12) return '12M';
-  return `${months}M`;
-}
-
 
 function money(value: number) {
   return `$${value.toLocaleString('en-US', {

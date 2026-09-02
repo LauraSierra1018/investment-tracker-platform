@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Brain,
+  FlaskConical,
   Check,
   ChevronRight,
   Info,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  Target,
   Star,
   TrendingDown,
   TrendingUp,
@@ -77,6 +79,39 @@ type AiResult = {
   questions?: string[];
 };
 
+
+type ResearchOpportunity = {
+  ticker: string;
+  company: string;
+  match: number;
+  score?: number | null;
+  beta?: number | null;
+  sector?: string | null;
+  reasons: string[];
+  cautions: string[];
+  components?: {
+    investment_quality?: number;
+    diversification_benefit?: number;
+    risk_fit?: number;
+    valuation?: number;
+    concentration_penalty?: number;
+  };
+};
+
+type OpportunitiesResponse = {
+  profile: 'moderate';
+  portfolio_summary?: {
+    positions?: number;
+    sectors?: number;
+    source?: string;
+  };
+  opportunities: ResearchOpportunity[];
+};
+
+type ImpactResponse = ResearchOpportunity & {
+  already_in_portfolio?: boolean;
+};
+
 const badge: Record<string, string> = {
   cumple: 'bg-emerald-100 text-emerald-800',
   revisar: 'bg-amber-100 text-amber-800',
@@ -117,6 +152,74 @@ export function Research() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
 
+
+  const [opportunities, setOpportunities] = useState<ResearchOpportunity[]>([]);
+  const [opportunitiesLoading, setOpportunitiesLoading] = useState(false);
+  const [opportunitiesAvailable, setOpportunitiesAvailable] = useState(false);
+  const [portfolioSource, setPortfolioSource] = useState<string | null>(null);
+
+  const [impact, setImpact] = useState<ImpactResponse | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+
+
+  async function loadPortfolioOpportunities() {
+    setOpportunitiesLoading(true);
+
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setOpportunitiesAvailable(false);
+        setOpportunities([]);
+        return;
+      }
+
+      const result = await api<OpportunitiesResponse>(
+        '/portfolio/opportunities?profile=moderate'
+      );
+
+      setOpportunities(result.opportunities || []);
+      setPortfolioSource(result.portfolio_summary?.source ?? null);
+      setOpportunitiesAvailable(true);
+    } catch {
+      // Research sigue siendo público aunque las oportunidades personalizadas
+      // requieran una sesión autenticada.
+      setOpportunitiesAvailable(false);
+      setOpportunities([]);
+    } finally {
+      setOpportunitiesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPortfolioOpportunities();
+  }, []);
+
+  function testInPortfolioLab(ticker: string) {
+    localStorage.setItem('portfolio-lab-pending-ticker', ticker.toUpperCase());
+    localStorage.setItem('portfolio-preferred-mode', 'lab');
+    router.push('/portfolio');
+  }
+
+  async function loadImpact(ticker: string) {
+    setImpactLoading(true);
+    setImpact(null);
+
+    try {
+      const result = await api<ImpactResponse>(
+        `/portfolio/impact/${encodeURIComponent(ticker)}?profile=moderate`
+      );
+      setImpact(result);
+    } catch {
+      setLoginRequired(true);
+    } finally {
+      setImpactLoading(false);
+    }
+  }
+
   async function runTicker(ticker: string) {
     const cleanTicker = ticker.trim().toUpperCase();
     if (!cleanTicker) return;
@@ -127,6 +230,7 @@ export function Research() {
     setLoginRequired(false);
     setAi(null);
     setAiError('');
+    setImpact(null);
     setActiveTab('overview');
     setHistoryRange('1M');
 
@@ -135,6 +239,11 @@ export function Research() {
         `/stocks/${encodeURIComponent(cleanTicker)}`
       );
       setStock(result);
+      api(`/portfolio/universe/${encodeURIComponent(cleanTicker)}`, {
+        method: 'POST',
+      }).catch(() => {
+        // Registrar el activo en Research Universe no debe bloquear la investigación.
+      });
     } catch (e: any) {
       console.error('Error buscando activo:', e);
       setError(
@@ -274,6 +383,149 @@ export function Research() {
         )}
       </section>
 
+      <section className="card p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex gap-3">
+            <div className="rounded-xl bg-violet-50 p-3">
+              <Target className="text-violet-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black">Oportunidades para tu portafolio</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+                Activos de Research Universe priorizados por calidad, diversificación,
+                ajuste de riesgo, valoración y concentración de tu portafolio actual.
+              </p>
+              {portfolioSource && (
+                <p className="mt-2 text-xs font-bold text-slate-400">
+                  Contexto: {portfolioSource === 'snaptrade' ? 'portafolio conectado por broker' : 'portafolio manual'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {opportunitiesAvailable && (
+            <button
+              onClick={loadPortfolioOpportunities}
+              disabled={opportunitiesLoading}
+              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-black"
+            >
+              <RefreshCw size={15} className={opportunitiesLoading ? 'animate-spin' : ''} />
+              Actualizar
+            </button>
+          )}
+        </div>
+
+        {opportunitiesLoading ? (
+          <div className="mt-6 flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 size={16} className="animate-spin" />
+            Analizando tu portafolio...
+          </div>
+        ) : !opportunitiesAvailable ? (
+          <div className="mt-6 rounded-2xl border border-dashed p-6">
+            <p className="font-black">Inicia sesión para personalizar Research</p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              La investigación individual sigue siendo pública. Al iniciar sesión podemos
+              priorizar activos según tu portafolio real o simulado.
+            </p>
+          </div>
+        ) : opportunities.length === 0 ? (
+          <div className="mt-6 rounded-2xl border border-dashed p-6 text-sm text-slate-500">
+            Investiga más activos para ampliar Research Universe y generar candidatos.
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-4 xl:grid-cols-3">
+            {opportunities.slice(0, 6).map((item) => (
+              <article key={item.ticker} className="rounded-2xl border p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xl font-black">{item.ticker}</p>
+                    <p className="mt-1 line-clamp-1 text-sm text-slate-500">
+                      {item.company}
+                    </p>
+                  </div>
+                  <span className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700">
+                    {item.match}%
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {item.sector && (
+                    <span className="rounded-full bg-slate-100 px-2 py-1 font-bold">
+                      {item.sector}
+                    </span>
+                  )}
+                  {item.score != null && (
+                    <span className="rounded-full bg-slate-100 px-2 py-1 font-bold">
+                      Score {Number(item.score).toFixed(0)}
+                    </span>
+                  )}
+                </div>
+
+                <ul className="mt-4 space-y-1.5 text-sm leading-5 text-slate-600">
+                  {item.reasons.slice(0, 3).map((reason) => (
+                    <li key={reason}>+ {reason}</li>
+                  ))}
+                </ul>
+
+                {item.cautions?.[0] && (
+                  <p className="mt-3 text-xs leading-5 text-amber-700">
+                    Revisar: {item.cautions[0]}
+                  </p>
+                )}
+
+                <div className="mt-5 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => runTicker(item.ticker)}
+                    className="rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-black text-white"
+                  >
+                    Investigar
+                  </button>
+                  <button
+                    onClick={() => testInPortfolioLab(item.ticker)}
+                    className="rounded-xl border px-3 py-2.5 text-sm font-black"
+                  >
+                    Probar en Lab
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {impact && (
+        <section className="rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-500">
+                Impacto frente a tu portafolio
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                <h3 className="text-xl font-black">{impact.ticker}</h3>
+                <span className="rounded-lg bg-white px-3 py-1 font-black text-indigo-700">
+                  Match {impact.match}%
+                </span>
+              </div>
+              <ul className="mt-3 space-y-1 text-sm text-slate-700">
+                {impact.reasons.slice(0, 3).map((x) => <li key={x}>+ {x}</li>)}
+              </ul>
+              {impact.cautions?.length > 0 && (
+                <p className="mt-3 text-sm text-amber-800">
+                  Revisar: {impact.cautions.join(' · ')}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => testInPortfolioLab(impact.ticker)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white"
+            >
+              <FlaskConical size={16} />
+              Probar en Portfolio Lab
+            </button>
+          </div>
+        </section>
+      )}
+
       {stock && (
         <>
           <AssetHeader
@@ -281,6 +533,9 @@ export function Research() {
             saved={saved}
             saving={saving}
             onSave={addToWatchlist}
+            onLab={() => testInPortfolioLab(stock.ticker)}
+            onImpact={() => loadImpact(stock.ticker)}
+            impactLoading={impactLoading}
           />
 
           {loginRequired && (
@@ -339,29 +594,15 @@ export function Research() {
           )}
 
           {activeTab === 'fundamentals' && (
-            <CriteriaTab
-              title="Fundamentales"
-              description="Rentabilidad, crecimiento, eficiencia, liquidez y salud financiera."
-              criteria={criteria}
-            />
+            <FundamentalsTab stock={stock} criteria={criteria} />
           )}
 
           {activeTab === 'valuation' && (
-            <CriteriaTab
-              title="Valoración"
-              description="Múltiplos, precio objetivo y métricas relacionadas con cuánto estás pagando por el negocio."
-              criteria={filterValuationCriteria(criteria)}
-              emptyMessage="Todavía no hay métricas de valoración suficientes para este activo."
-            />
+            <ValuationTab stock={stock} criteria={criteria} />
           )}
 
           {activeTab === 'risk' && (
-            <CriteriaTab
-              title="Riesgo"
-              description="Volatilidad, endeudamiento, liquidez, free float y otros factores que pueden aumentar la incertidumbre."
-              criteria={filterRiskCriteria(criteria)}
-              emptyMessage="Todavía no hay métricas de riesgo suficientes para este activo."
-            />
+            <RiskTab stock={stock} criteria={criteria} history={history} />
           )}
 
           {activeTab === 'compare' && (
@@ -389,11 +630,17 @@ function AssetHeader({
   saved,
   saving,
   onSave,
+  onLab,
+  onImpact,
+  impactLoading,
 }: {
   stock: Stock;
   saved: boolean;
   saving: boolean;
   onSave: () => void;
+  onLab: () => void;
+  onImpact: () => void;
+  impactLoading: boolean;
 }) {
   const s = stock as any;
   const dailyChange =
@@ -442,29 +689,52 @@ function AssetHeader({
             )}
           </div>
 
-          <button
-            onClick={onSave}
-            disabled={saving || saved}
-            className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black transition ${
-              saved
-                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                : 'border border-slate-200 bg-white text-slate-900 hover:bg-slate-50'
-            }`}
-          >
-            {saving ? (
-              <>
-                <Loader2 size={16} className="animate-spin" /> Guardando...
-              </>
-            ) : saved ? (
-              <>
-                <Check size={16} /> Guardado
-              </>
-            ) : (
-              <>
-                <Star size={16} /> Watchlist
-              </>
-            )}
-          </button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              onClick={onSave}
+              disabled={saving || saved}
+              className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black transition ${
+                saved
+                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border border-slate-200 bg-white text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              {saving ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" /> Guardando...
+                </>
+              ) : saved ? (
+                <>
+                  <Check size={16} /> Guardado
+                </>
+              ) : (
+                <>
+                  <Star size={16} /> Watchlist
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={onImpact}
+              disabled={impactLoading}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 text-sm font-black text-indigo-700"
+            >
+              {impactLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Target size={16} />
+              )}
+              Ver impacto
+            </button>
+
+            <button
+              onClick={onLab}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-black text-white"
+            >
+              <FlaskConical size={16} />
+              Portfolio Lab
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -741,119 +1011,52 @@ function ScoreRow({
 
 function KeyMetrics({ stock, criteria }: { stock: Stock; criteria: Criterion[] }) {
   const s = stock as any;
-
-  const currentPrice =
-    stock.price != null ? Number(stock.price) : null;
-
-  const targetPrice =
-    s.target_price != null ? Number(s.target_price) : null;
-
-  const upside =
-    currentPrice != null &&
-    currentPrice > 0 &&
-    targetPrice != null
-      ? ((targetPrice - currentPrice) / currentPrice) * 100
-      : null;
-
-  const currency = stock.currency || 'USD';
-
   const metrics = [
     {
       label: 'Market Cap',
       value: stock.market_cap ? formatLarge(stock.market_cap) : '—',
-      subtitle: 'Tamaño de la empresa',
     },
     {
       label: 'P/E',
-      value:
-        stock.pe_ratio != null
-          ? `${Number(stock.pe_ratio).toFixed(1)}x`
-          : '—',
-      subtitle: 'Precio / ganancias',
-    },
-    {
-      label: 'Precio actual',
-      value:
-        currentPrice != null
-          ? `${currency} ${currentPrice.toLocaleString('en-US', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}`
-          : '—',
-      subtitle: 'Cotización actual',
+      value: stock.pe_ratio != null ? `${Number(stock.pe_ratio).toFixed(1)}x` : '—',
     },
     {
       label: 'Precio objetivo',
       value:
-        targetPrice != null
-          ? `${currency} ${targetPrice.toLocaleString('en-US', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}`
+        s.target_price != null
+          ? `${stock.currency || ''} ${Number(s.target_price).toFixed(2)}`
           : criterionValue(criteria, ['target', 'precio objetivo']),
-      subtitle: 'Promedio de analistas',
     },
     {
-      label: 'Potencial',
+      label: 'Free float',
       value:
-        upside != null
-          ? `${upside >= 0 ? '+' : ''}${upside.toFixed(1)}%`
+        stock.free_float_percent != null
+          ? `${Number(stock.free_float_percent).toFixed(1)}%`
           : '—',
-      subtitle:
-        upside == null
-          ? 'Sin precio objetivo'
-          : upside >= 15
-          ? 'Potencial ≥ 15%'
-          : upside >= 0
-          ? 'Potencial entre 0% y 15%'
-          : 'Objetivo inferior al precio actual',
-      tone:
-        upside == null
-          ? 'neutral'
-          : upside >= 15
-          ? 'positive'
-          : upside >= 0
-          ? 'warning'
-          : 'negative',
     },
     {
       label: 'Beta',
+      value: s.beta != null ? Number(s.beta).toFixed(2) : criterionValue(criteria, ['beta']),
+    },
+    {
+      label: 'Revenue growth',
       value:
-        s.beta != null
-          ? Number(s.beta).toFixed(2)
-          : criterionValue(criteria, ['beta']),
-      subtitle: 'Volatilidad relativa',
+        s.revenue_growth != null
+          ? formatPercentish(s.revenue_growth)
+          : criterionValue(criteria, ['revenue growth', 'crecimiento ingresos']),
     },
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-      {metrics.map((metric) => {
-        const valueTone =
-          metric.tone === 'positive'
-            ? 'text-emerald-600'
-            : metric.tone === 'warning'
-            ? 'text-amber-600'
-            : metric.tone === 'negative'
-            ? 'text-rose-600'
-            : 'text-slate-950';
-
-        return (
-          <article key={metric.label} className="card p-4">
-            <p className="text-xs font-black uppercase tracking-wide text-slate-400">
-              {metric.label}
-            </p>
-
-            <p className={`mt-2 text-lg font-black ${valueTone}`}>
-              {metric.value}
-            </p>
-
-            <p className="mt-1 text-xs text-slate-400">
-              {metric.subtitle}
-            </p>
-          </article>
-        );
-      })}
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      {metrics.map((metric) => (
+        <article key={metric.label} className="card p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-slate-400">
+            {metric.label}
+          </p>
+          <p className="mt-2 text-lg font-black">{metric.value}</p>
+        </article>
+      ))}
     </section>
   );
 }
@@ -894,6 +1097,578 @@ function CategoryPreview({
         ))}
       </div>
     </section>
+  );
+}
+
+
+function FundamentalsTab({
+  stock,
+  criteria,
+}: {
+  stock: Stock;
+  criteria: Criterion[];
+}) {
+  const groups = [
+    {
+      title: 'Crecimiento',
+      description: 'Evalúa si el negocio está expandiendo ingresos y beneficios.',
+      criteria: filterFundamentalCriteria(criteria, 'growth'),
+    },
+    {
+      title: 'Rentabilidad',
+      description: 'Mide la capacidad de convertir capital, activos e ingresos en beneficios.',
+      criteria: filterFundamentalCriteria(criteria, 'profitability'),
+    },
+    {
+      title: 'Balance y liquidez',
+      description: 'Revisa endeudamiento y capacidad de responder a obligaciones de corto plazo.',
+      criteria: filterFundamentalCriteria(criteria, 'balance'),
+    },
+    {
+      title: 'Flujo de caja',
+      description: 'Mide la generación de efectivo disponible después de financiar la operación.',
+      criteria: filterFundamentalCriteria(criteria, 'cashflow'),
+    },
+  ].filter((group) => group.criteria.length > 0);
+
+  const fundamentalCriteria = uniqueCriteria(
+    groups.flatMap((group) => group.criteria)
+  );
+
+  const score = calculateSectionScore(fundamentalCriteria);
+
+  return (
+    <div className="space-y-5">
+      <ResearchSectionHeader
+        eyebrow="Análisis del negocio"
+        title="Fundamentales"
+        description="Profundiza en crecimiento, rentabilidad, balance y generación de caja. Aquí la pregunta principal es si el negocio que estás comprando es financieramente sólido."
+        score={score}
+        scoreLabel={scoreLabel(score)}
+      />
+
+      <MetricStrip
+        items={[
+          metricFromCriterion(criteria, ['revenue growth', 'crecimiento ingresos'], 'Revenue growth'),
+          metricFromCriterion(criteria, ['earnings growth', 'crecimiento beneficios', 'crecimiento ganancias'], 'Earnings growth'),
+          metricFromCriterion(criteria, ['roe', 'return on equity'], 'ROE'),
+          metricFromCriterion(criteria, ['operating margin', 'margen operativo'], 'Operating margin'),
+          metricFromCriterion(criteria, ['free cash flow', 'flujo de caja libre'], 'Free cash flow'),
+          metricFromCriterion(criteria, ['current ratio', 'liquidez corriente'], 'Current ratio'),
+        ].filter(Boolean) as ResearchMetric[]}
+      />
+
+      {groups.length === 0 ? (
+        <EmptyResearchState>
+          No hay suficientes métricas fundamentales disponibles para este activo.
+        </EmptyResearchState>
+      ) : (
+        groups.map((group) => (
+          <DeepDiveSection
+            key={group.title}
+            title={group.title}
+            description={group.description}
+            criteria={group.criteria}
+          />
+        ))
+      )}
+
+      <SectionTakeaways
+        title="Lectura fundamental"
+        criteria={fundamentalCriteria}
+        positiveTitle="Fortalezas del negocio"
+        negativeTitle="Puntos a vigilar"
+      />
+    </div>
+  );
+}
+
+function ValuationTab({
+  stock,
+  criteria,
+}: {
+  stock: Stock;
+  criteria: Criterion[];
+}) {
+  const s = stock as any;
+  const valuationCriteria = filterValuationCriteria(criteria);
+  const score = calculateSectionScore(valuationCriteria);
+
+  const price = stock.price != null ? Number(stock.price) : null;
+  const target =
+    s.target_price != null
+      ? Number(s.target_price)
+      : criterionNumber(criteria, ['target', 'precio objetivo']);
+  const upside =
+    s.upside_percent ??
+    s.upside_pct ??
+    (price != null && price > 0 && target != null
+      ? ((target - price) / price) * 100
+      : criterionNumber(criteria, ['upside', 'potencial']));
+
+  return (
+    <div className="space-y-5">
+      <ResearchSectionHeader
+        eyebrow="Precio vs. valor"
+        title="Valoración"
+        description="Esta sección responde cuánto estás pagando por el negocio. Separa la calidad de la empresa de la conveniencia del precio actual."
+        score={score}
+        scoreLabel={scoreLabel(score)}
+      />
+
+      <MetricStrip
+        items={[
+          {
+            label: 'Precio actual',
+            value:
+              price != null
+                ? `${stock.currency || ''} ${price.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`
+                : '—',
+          },
+          {
+            label: 'Precio objetivo',
+            value:
+              target != null
+                ? `${stock.currency || ''} ${target.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`
+                : '—',
+          },
+          {
+            label: 'Potencial',
+            value:
+              upside != null
+                ? `${Number(upside) >= 0 ? '+' : ''}${Number(upside).toFixed(1)}%`
+                : '—',
+            tone:
+              upside == null
+                ? 'neutral'
+                : Number(upside) >= 15
+                ? 'good'
+                : Number(upside) < 0
+                ? 'bad'
+                : 'review',
+          },
+          {
+            label: 'P/E',
+            value:
+              stock.pe_ratio != null
+                ? `${Number(stock.pe_ratio).toFixed(1)}x`
+                : criterionValue(criteria, ['p/e', 'pe ratio']),
+          },
+          {
+            label: 'Market Cap',
+            value: stock.market_cap ? formatLarge(stock.market_cap) : '—',
+          },
+        ]}
+      />
+
+      <section className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className="card overflow-hidden">
+          <div className="border-b bg-slate-50 px-6 py-4">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+              Múltiplos y expectativas
+            </p>
+            <h3 className="mt-1 text-lg font-black">Qué está descontando el mercado</h3>
+          </div>
+
+          {valuationCriteria.length > 0 ? (
+            <div className="grid divide-y lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+              {valuationCriteria.map((criterion) => (
+                <CriterionCard key={criterion.key} criterion={criterion} />
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-sm text-slate-500">
+              No hay suficientes múltiplos disponibles para este activo.
+            </div>
+          )}
+        </div>
+
+        <ValuationPerspective
+          price={price}
+          target={target}
+          upside={upside != null ? Number(upside) : null}
+          pe={stock.pe_ratio != null ? Number(stock.pe_ratio) : null}
+        />
+      </section>
+
+      <SectionTakeaways
+        title="Lectura de valoración"
+        criteria={valuationCriteria}
+        positiveTitle="Señales favorables"
+        negativeTitle="Riesgos de precio"
+      />
+    </div>
+  );
+}
+
+function RiskTab({
+  stock,
+  criteria,
+  history,
+}: {
+  stock: Stock;
+  criteria: Criterion[];
+  history: HistoryResponse | null;
+}) {
+  const riskCriteria = filterRiskCriteria(criteria);
+  const score = calculateRiskScore(riskCriteria);
+  const beta =
+    (stock as any).beta != null
+      ? Number((stock as any).beta)
+      : criterionNumber(criteria, ['beta']);
+
+  const drawdown = calculateMaxDrawdown(history?.points ?? []);
+  const volatility = calculateAnnualizedVolatility(history?.points ?? []);
+
+  return (
+    <div className="space-y-5">
+      <ResearchSectionHeader
+        eyebrow="Protección del capital"
+        title="Riesgo"
+        description="Profundiza en volatilidad, sensibilidad al mercado, liquidez y estructura financiera. Aquí una puntuación más alta significa un perfil de riesgo más saludable dentro de los criterios disponibles."
+        score={score}
+        scoreLabel={riskScoreLabel(score)}
+      />
+
+      <MetricStrip
+        items={[
+          {
+            label: 'Beta',
+            value: beta != null ? beta.toFixed(2) : '—',
+            tone:
+              beta == null
+                ? 'neutral'
+                : beta >= 0.7 && beta <= 1.3
+                ? 'good'
+                : beta <= 2
+                ? 'review'
+                : 'bad',
+          },
+          {
+            label: 'Volatilidad anualizada',
+            value: volatility != null ? `${volatility.toFixed(1)}%` : '—',
+          },
+          {
+            label: 'Máx. drawdown',
+            value: drawdown != null ? `${drawdown.toFixed(1)}%` : '—',
+            tone:
+              drawdown == null
+                ? 'neutral'
+                : drawdown >= -15
+                ? 'good'
+                : drawdown >= -30
+                ? 'review'
+                : 'bad',
+          },
+          metricFromCriterion(criteria, ['debt to equity', 'debt/equity', 'deuda'], 'Debt / Equity'),
+          metricFromCriterion(criteria, ['current ratio', 'liquidez corriente'], 'Current ratio'),
+          metricFromCriterion(criteria, ['free float', 'float'], 'Free float'),
+        ].filter(Boolean) as ResearchMetric[]}
+      />
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <DeepDiveSection
+          title="Riesgo de mercado"
+          description="Sensibilidad del precio y amplitud de las caídas observadas en el histórico disponible."
+          criteria={filterRiskCriteria(criteria, 'market')}
+          extra={
+            <div className="grid gap-3 sm:grid-cols-2">
+              <InlineRiskMetric
+                label="Volatilidad"
+                value={volatility != null ? `${volatility.toFixed(1)}%` : '—'}
+                description="Desviación anualizada aproximada de los retornos diarios del histórico cargado."
+              />
+              <InlineRiskMetric
+                label="Máximo drawdown"
+                value={drawdown != null ? `${drawdown.toFixed(1)}%` : '—'}
+                description="Mayor caída desde un máximo previo dentro del histórico cargado."
+              />
+            </div>
+          }
+        />
+
+        <DeepDiveSection
+          title="Riesgo financiero"
+          description="Endeudamiento, liquidez y estructura que pueden aumentar la fragilidad financiera."
+          criteria={filterRiskCriteria(criteria, 'financial')}
+        />
+      </div>
+
+      <SectionTakeaways
+        title="Mapa de riesgos"
+        criteria={riskCriteria}
+        positiveTitle="Factores defensivos"
+        negativeTitle="Riesgos principales"
+      />
+    </div>
+  );
+}
+
+type ResearchMetric = {
+  label: string;
+  value: string;
+  tone?: 'good' | 'review' | 'bad' | 'neutral';
+};
+
+function ResearchSectionHeader({
+  eyebrow,
+  title,
+  description,
+  score,
+  scoreLabel,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  score: number | null;
+  scoreLabel: string;
+}) {
+  const tone =
+    score == null
+      ? 'bg-slate-100 text-slate-600'
+      : score >= 75
+      ? 'bg-emerald-50 text-emerald-700'
+      : score >= 55
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-rose-50 text-rose-700';
+
+  return (
+    <section className="card p-6">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-3xl">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+            {eyebrow}
+          </p>
+          <h2 className="mt-1 text-2xl font-black">{title}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+
+        <div className={`min-w-[150px] rounded-2xl px-5 py-4 text-center ${tone}`}>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">
+            Subscore
+          </p>
+          <p className="mt-1 text-3xl font-black">
+            {score != null ? score.toFixed(0) : '—'}
+            {score != null && <span className="text-sm">/100</span>}
+          </p>
+          <p className="mt-1 text-xs font-black">{scoreLabel}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MetricStrip({ items }: { items: ResearchMetric[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {items.map((item) => {
+        const tone =
+          item.tone === 'good'
+            ? 'text-emerald-700'
+            : item.tone === 'review'
+            ? 'text-amber-700'
+            : item.tone === 'bad'
+            ? 'text-rose-700'
+            : 'text-slate-950';
+
+        return (
+          <article key={item.label} className="card p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
+              {item.label}
+            </p>
+            <p className={`mt-2 text-lg font-black ${tone}`}>{item.value}</p>
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+function DeepDiveSection({
+  title,
+  description,
+  criteria,
+  extra,
+}: {
+  title: string;
+  description: string;
+  criteria: Criterion[];
+  extra?: React.ReactNode;
+}) {
+  return (
+    <section className="card overflow-hidden">
+      <div className="border-b bg-slate-50 px-6 py-4">
+        <h3 className="text-lg font-black">{title}</h3>
+        <p className="mt-1 text-sm leading-5 text-slate-500">{description}</p>
+      </div>
+
+      {extra && <div className="border-b p-5">{extra}</div>}
+
+      {criteria.length > 0 ? (
+        <div className="grid divide-y lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+          {criteria.map((criterion) => (
+            <CriterionCard key={criterion.key} criterion={criterion} />
+          ))}
+        </div>
+      ) : (
+        !extra && (
+          <div className="p-6 text-sm text-slate-500">
+            No hay suficientes datos disponibles para esta subsección.
+          </div>
+        )
+      )}
+    </section>
+  );
+}
+
+function ValuationPerspective({
+  price,
+  target,
+  upside,
+  pe,
+}: {
+  price: number | null;
+  target: number | null;
+  upside: number | null;
+  pe: number | null;
+}) {
+  const message =
+    upside == null
+      ? 'No hay un precio objetivo suficiente para estimar potencial.'
+      : upside >= 15
+      ? 'El precio objetivo disponible implica un potencial atractivo según el umbral del modelo.'
+      : upside >= 0
+      ? 'El precio objetivo implica potencial positivo, aunque todavía en zona de revisión.'
+      : 'El precio actual se encuentra por encima del precio objetivo disponible.';
+
+  return (
+    <aside className="card p-6">
+      <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+        Perspectiva
+      </p>
+      <h3 className="mt-1 text-lg font-black">Precio frente a expectativas</h3>
+
+      <div className="mt-5 space-y-4">
+        <PerspectiveRow label="Precio actual" value={price != null ? price.toFixed(2) : '—'} />
+        <PerspectiveRow label="Target medio" value={target != null ? target.toFixed(2) : '—'} />
+        <PerspectiveRow
+          label="Potencial"
+          value={upside != null ? `${upside >= 0 ? '+' : ''}${upside.toFixed(1)}%` : '—'}
+        />
+        <PerspectiveRow label="P/E" value={pe != null ? `${pe.toFixed(1)}x` : '—'} />
+      </div>
+
+      <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        {message}
+      </div>
+
+      <p className="mt-4 text-xs leading-5 text-slate-400">
+        El precio objetivo es una estimación de consenso, no una garantía de retorno.
+      </p>
+    </aside>
+  );
+}
+
+function PerspectiveRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b pb-3 last:border-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="font-black">{value}</span>
+    </div>
+  );
+}
+
+function InlineRiskMetric({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-4">
+      <p className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-black">{value}</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function SectionTakeaways({
+  title,
+  criteria,
+  positiveTitle,
+  negativeTitle,
+}: {
+  title: string;
+  criteria: Criterion[];
+  positiveTitle: string;
+  negativeTitle: string;
+}) {
+  const positives = criteria.filter((item) => item.status === 'cumple');
+  const negatives = criteria.filter(
+    (item) => item.status === 'revisar' || item.status === 'no_cumple'
+  );
+
+  if (positives.length === 0 && negatives.length === 0) return null;
+
+  return (
+    <section className="card p-6">
+      <h3 className="text-lg font-black">{title}</h3>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <TakeawayList title={positiveTitle} criteria={positives} positive />
+        <TakeawayList title={negativeTitle} criteria={negatives} positive={false} />
+      </div>
+    </section>
+  );
+}
+
+function TakeawayList({
+  title,
+  criteria,
+  positive,
+}: {
+  title: string;
+  criteria: Criterion[];
+  positive: boolean;
+}) {
+  return (
+    <div className={positive ? 'rounded-2xl bg-emerald-50 p-5' : 'rounded-2xl bg-amber-50 p-5'}>
+      <h4 className={positive ? 'font-black text-emerald-900' : 'font-black text-amber-900'}>
+        {title}
+      </h4>
+      {criteria.length > 0 ? (
+        <ul className="mt-3 space-y-3">
+          {criteria.slice(0, 5).map((criterion) => (
+            <li key={criterion.key} className="text-sm leading-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-bold">{criterion.name}</span>
+                <span className="font-black">{criterion.formatted_value}</span>
+              </div>
+              <p className="mt-1 text-xs opacity-70">{criterion.explanation}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm opacity-70">No hay señales disponibles en esta categoría.</p>
+      )}
+    </div>
+  );
+}
+
+function EmptyResearchState({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="card p-10 text-center text-sm text-slate-500">{children}</section>
   );
 }
 
@@ -1094,6 +1869,217 @@ function SourceFooter({ stock, history }: { stock: Stock; history: HistoryRespon
   );
 }
 
+
+function uniqueCriteria(criteria: Criterion[]) {
+  const seen = new Set<string>();
+  return criteria.filter((item) => {
+    const key = item.key || item.name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function criterionNumber(criteria: Criterion[], needles: string[]) {
+  const found = criteria.find((item) => {
+    const haystack = `${item.key} ${item.name}`.toLowerCase();
+    return needles.some((needle) => haystack.includes(needle));
+  });
+
+  if (found?.value != null && Number.isFinite(Number(found.value))) {
+    return Number(found.value);
+  }
+
+  if (!found?.formatted_value) return null;
+
+  const cleaned = found.formatted_value.replace(/[$,%xX\s]/g, '').replace(/,/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function metricFromCriterion(
+  criteria: Criterion[],
+  needles: string[],
+  label: string
+): ResearchMetric | null {
+  const found = criteria.find((item) => {
+    const haystack = `${item.key} ${item.name}`.toLowerCase();
+    return needles.some((needle) => haystack.includes(needle));
+  });
+
+  if (!found) return null;
+
+  return {
+    label,
+    value: found.formatted_value || '—',
+    tone:
+      found.status === 'cumple'
+        ? 'good'
+        : found.status === 'revisar'
+        ? 'review'
+        : found.status === 'no_cumple'
+        ? 'bad'
+        : 'neutral',
+  };
+}
+
+function calculateSectionScore(criteria: Criterion[]) {
+  const available = criteria.filter((item) => item.status !== 'sin_dato');
+  if (available.length === 0) return null;
+
+  const points: Record<string, number> = {
+    cumple: 100,
+    revisar: 55,
+    no_cumple: 15,
+  };
+
+  const total = available.reduce(
+    (sum, item) => sum + (points[item.status] ?? 0),
+    0
+  );
+
+  return total / available.length;
+}
+
+function calculateRiskScore(criteria: Criterion[]) {
+  return calculateSectionScore(criteria);
+}
+
+function scoreLabel(score: number | null) {
+  if (score == null) return 'Sin datos suficientes';
+  if (score >= 80) return 'Muy sólido';
+  if (score >= 65) return 'Sólido';
+  if (score >= 50) return 'Mixto';
+  return 'Débil';
+}
+
+function riskScoreLabel(score: number | null) {
+  if (score == null) return 'Sin datos suficientes';
+  if (score >= 80) return 'Riesgo contenido';
+  if (score >= 65) return 'Riesgo moderado';
+  if (score >= 50) return 'Riesgo a vigilar';
+  return 'Riesgo elevado';
+}
+
+function filterFundamentalCriteria(
+  criteria: Criterion[],
+  section: 'growth' | 'profitability' | 'balance' | 'cashflow'
+) {
+  const words: Record<'growth' | 'profitability' | 'balance' | 'cashflow', string[]> = {
+    growth: [
+      'revenue growth',
+      'earnings growth',
+      'crecimiento ingresos',
+      'crecimiento beneficios',
+      'crecimiento ganancias',
+      'revenue',
+      'ingresos',
+    ],
+    profitability: [
+      'roe',
+      'roa',
+      'return on equity',
+      'return on assets',
+      'operating margin',
+      'margen operativo',
+      'rentabilidad',
+    ],
+    balance: [
+      'debt',
+      'deuda',
+      'current ratio',
+      'liquidez',
+    ],
+    cashflow: [
+      'free cash flow',
+      'free cashflow',
+      'flujo de caja',
+      'fcf',
+    ],
+  };
+
+  return criteria.filter((item) => {
+    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
+    return words[section].some((word) => haystack.includes(word));
+  });
+}
+
+function filterRiskCriteria(
+  criteria: Criterion[],
+  section?: 'market' | 'financial'
+) {
+  const marketWords = [
+    'beta',
+    'riesgo',
+    'risk',
+    'volatil',
+    'free float',
+    'float',
+    'drawdown',
+    'short',
+  ];
+
+  const financialWords = [
+    'debt',
+    'deuda',
+    'current ratio',
+    'liquidez',
+    'free cash flow',
+    'flujo de caja',
+  ];
+
+  const words =
+    section === 'market'
+      ? marketWords
+      : section === 'financial'
+      ? financialWords
+      : [...marketWords, ...financialWords];
+
+  return criteria.filter((item) => {
+    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
+    return words.some((word) => haystack.includes(word));
+  });
+}
+
+function calculateMaxDrawdown(points: HistoryPoint[]) {
+  const closes = points
+    .map((point) => Number(point.close))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (closes.length < 2) return null;
+
+  let peak = closes[0];
+  let maxDrawdown = 0;
+
+  for (const close of closes) {
+    if (close > peak) peak = close;
+    const drawdown = ((close - peak) / peak) * 100;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  }
+
+  return maxDrawdown;
+}
+
+function calculateAnnualizedVolatility(points: HistoryPoint[]) {
+  const closes = points
+    .map((point) => Number(point.close))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (closes.length < 3) return null;
+
+  const returns: number[] = [];
+  for (let i = 1; i < closes.length; i += 1) {
+    returns.push(Math.log(closes[i] / closes[i - 1]));
+  }
+
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance =
+    returns.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) /
+    Math.max(returns.length - 1, 1);
+
+  return Math.sqrt(variance) * Math.sqrt(252) * 100;
+}
+
 function groupCriteria(criteria: Criterion[]) {
   const groups = new Map<string, Criterion[]>();
 
@@ -1126,28 +2112,6 @@ function filterValuationCriteria(criteria: Criterion[]) {
     'potencial',
     'market cap',
     'capitalización',
-  ];
-
-  return criteria.filter((item) => {
-    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
-    return words.some((word) => haystack.includes(word));
-  });
-}
-
-function filterRiskCriteria(criteria: Criterion[]) {
-  const words = [
-    'beta',
-    'riesgo',
-    'risk',
-    'volatil',
-    'debt',
-    'deuda',
-    'liquidez',
-    'current ratio',
-    'free float',
-    'float',
-    'drawdown',
-    'short',
   ];
 
   return criteria.filter((item) => {

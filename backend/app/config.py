@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     alpha_vantage_api_key: str = ""
 
+    # SnapTrade
+    snaptrade_client_id: str = ""
+    snaptrade_consumer_key: str = ""
+    snaptrade_encryption_key: str = ""
+    snaptrade_redirect_url: str = "http://localhost:3000/portfolio"
+
     # Supabase
     supabase_url: str = ""
     supabase_publishable_key: str = ""
