@@ -21,6 +21,7 @@ from ..services.snaptrade_service import (
     connection_portal,
     sync_portfolio,
 )
+from ..services.broker_sync_guard import sync_snaptrade_preserving_imports
 
 
 router = APIRouter(
@@ -77,8 +78,6 @@ def register_research_asset(
         "ticker": asset.ticker,
         "registered": True,
     }
-
-
 
 
 @router.get("/opportunities")
@@ -161,9 +160,10 @@ def snaptrade_sync(
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return sync_portfolio(
+    return sync_snaptrade_preserving_imports(
         db,
         user.id,
+        sync_portfolio,
     )
 
 
