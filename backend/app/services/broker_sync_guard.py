@@ -57,3 +57,28 @@ def sync_snaptrade_preserving_imports(db: Session, app_user_id: str, sync_callab
     db.commit()
     result["imported_snapshots_preserved"] = len(snapshots)
     return result
+
+
+def combined_broker_status(db: Session, app_user_id: str, snaptrade_status_callable):
+    status = dict(snaptrade_status_callable(db, app_user_id))
+
+    imported = list(
+        db.scalars(
+            select(BrokerPosition).where(
+                BrokerPosition.user_id == app_user_id,
+                BrokerPosition.account_id.like("import:%"),
+            )
+        )
+    )
+
+    imported_accounts = sorted({row.account_id for row in imported})
+    status["imported_accounts"] = len(imported_accounts)
+    status["imported_positions"] = len(imported)
+    status["has_external_portfolio"] = bool(imported) or bool(status.get("connected"))
+
+    # El frontend actual usa `connected` para decidir si consulta broker_positions.
+    # Lo mantenemos compatible sin tocar el componente grande de Portfolio.
+    if imported:
+        status["connected"] = True
+
+    return status
