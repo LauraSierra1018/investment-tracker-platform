@@ -11,6 +11,7 @@ import { Dashboard } from '@/components/dashboard';
 import { Research } from '@/components/research';
 import { Watchlist } from '@/components/watchlist';
 import { Portfolio } from '@/components/portfolio';
+import { BrokerImport } from '@/components/broker-import';
 import { Criteria } from '@/components/criteria';
 
 const mobileTabs: {
@@ -32,6 +33,10 @@ const mobileTabs: {
   {
     id: 'portfolio',
     label: 'Portafolio',
+  },
+  {
+    id: 'broker-import',
+    label: 'Importar broker',
   },
   {
     id: 'criteria',
@@ -96,6 +101,10 @@ export default function Page() {
 
           {tab === 'portfolio' && (
             <Portfolio />
+          )}
+
+          {tab === 'broker-import' && (
+            <BrokerImport />
           )}
 
           {tab === 'criteria' && (

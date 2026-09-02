@@ -16,12 +16,14 @@ from .auth import (
 )
 from .routers.research import router as research_router
 from .routers.portfolio_v2 import router as portfolio_v2_router
+from .routers.portfolio_import import router as portfolio_import_router
 
 Base.metadata.create_all(engine)
 app=FastAPI(title="Investment Research API",version="2.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=[settings.frontend_origin,"http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 app.include_router(research_router)
 app.include_router(portfolio_v2_router)
+app.include_router(portfolio_import_router)
 
 @app.get("/health")
 def health(): return {"status":"ok"}

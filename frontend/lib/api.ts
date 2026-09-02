@@ -14,7 +14,9 @@ export async function api<T>(
 
   const headers = new Headers(options?.headers);
 
-  headers.set('Content-Type', 'application/json');
+  if (!(options?.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   /*
    * Si hay usuario autenticado enviamos su JWT
