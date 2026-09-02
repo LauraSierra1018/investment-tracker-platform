@@ -6,6 +6,8 @@ from typing import Any
 import yfinance as yf
 from fastapi import HTTPException
 
+from .market_snapshot import load_snapshot, save_snapshot
+
 
 RANGE_CONFIG: dict[str, tuple[str, str]] = {
     "1D": ("1d", "5m"),
@@ -17,9 +19,19 @@ RANGE_CONFIG: dict[str, tuple[str, str]] = {
     "5Y": ("5y", "1wk"),
 }
 
+FRESH_TTL_SECONDS = {
+    "1D": 5 * 60,
+    "5D": 15 * 60,
+    "1M": 2 * 60 * 60,
+    "6M": 6 * 60 * 60,
+    "YTD": 6 * 60 * 60,
+    "1Y": 12 * 60 * 60,
+    "5Y": 24 * 60 * 60,
+}
+MAX_STALE_SECONDS = 30 * 24 * 60 * 60
+
 
 def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
-    """Return chart-ready OHLCV history for a Yahoo Finance ticker."""
     symbol = ticker.strip().upper()
     requested = range_key.strip().upper()
 
@@ -32,10 +44,16 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
             detail=f"Rango inválido. Usa uno de: {', '.join(RANGE_CONFIG)}",
         )
 
+    cache_key = f"{symbol}:{requested}"
+    cached = load_snapshot("chart", cache_key, FRESH_TTL_SECONDS[requested])
+    if isinstance(cached, dict):
+        return cached
+
     period, interval = RANGE_CONFIG[requested]
 
     try:
-        frame = yf.Ticker(symbol).history(
+        ticker_obj = yf.Ticker(symbol)
+        frame = ticker_obj.history(
             period=period,
             interval=interval,
             auto_adjust=False,
@@ -43,34 +61,39 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
             prepost=False,
         )
     except Exception as exc:
+        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
+        if isinstance(stale, dict):
+            stale = dict(stale)
+            stale["stale"] = True
+            stale["warning"] = "No se pudo actualizar el gráfico. Se muestran los últimos datos disponibles."
+            return stale
         raise HTTPException(
             status_code=502,
             detail=f"No fue posible consultar el histórico de {symbol}: {exc}",
         ) from exc
 
     if frame is None or frame.empty:
+        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
+        if isinstance(stale, dict):
+            stale = dict(stale)
+            stale["stale"] = True
+            stale["warning"] = "No se pudo actualizar el gráfico. Se muestran los últimos datos disponibles."
+            return stale
         raise HTTPException(
             status_code=404,
             detail=f"No se encontraron precios históricos para {symbol}.",
         )
 
     points: list[dict[str, Any]] = []
-
     for index, row in frame.iterrows():
         try:
             dt = index.to_pydatetime() if hasattr(index, "to_pydatetime") else index
         except Exception:
             dt = index
-
-        if isinstance(dt, datetime):
-            timestamp = dt.isoformat()
-        else:
-            timestamp = str(dt)
-
+        timestamp = dt.isoformat() if isinstance(dt, datetime) else str(dt)
         close = _number(row.get("Close"))
         if close is None:
             continue
-
         points.append(
             {
                 "date": timestamp,
@@ -83,30 +106,31 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
         )
 
     if not points:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No se encontraron precios utilizables para {symbol}.",
-        )
+        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
+        if isinstance(stale, dict):
+            return stale
+        raise HTTPException(status_code=404, detail=f"No se encontraron precios utilizables para {symbol}.")
 
     first_close = points[0]["close"]
     last_close = points[-1]["close"]
-    change_percent = None
+    change_percent = (((last_close - first_close) / first_close) * 100 if first_close not in (None, 0) and last_close is not None else None)
 
-    if first_close not in (None, 0) and last_close is not None:
-        change_percent = ((last_close - first_close) / first_close) * 100
-
-    return {
+    result = {
         "ticker": symbol,
         "range": requested,
         "period": period,
         "interval": interval,
-        "currency": getattr(yf.Ticker(symbol), "fast_info", {}).get("currency"),
+        "currency": None,
         "first_close": first_close,
         "last_close": last_close,
         "change_percent": change_percent,
         "points": points,
         "source": "Yahoo Finance via yfinance",
+        "stale": False,
+        "warning": None,
     }
+    save_snapshot("chart", cache_key, result)
+    return result
 
 
 def _number(value: Any) -> float | None:
@@ -114,7 +138,7 @@ def _number(value: Any) -> float | None:
         if value is None:
             return None
         number = float(value)
-        if number != number:  # NaN
+        if number != number:
             return None
         return number
     except (TypeError, ValueError):
