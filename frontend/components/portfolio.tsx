@@ -602,7 +602,7 @@ function RealPortfolio() {
                 </span>
               </div>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-                Conecta un broker compatible mediante SnapTrade o importa un estado de cuenta PDF, CSV o Excel de Hapi, Trii, Tyba u otro broker. La app solo lee posiciones y nunca crea órdenes.
+                Conecta un broker compatible mediante SnapTrade o importa un estado de cuenta PDF, CSV o Excel de Hapi, Trii, Tyba u otro broker. La app solo lee posiciones, no crea ordenes ni modifica información del boker o billetera.
               </p>
 
               {brokerStatus?.connected && (
