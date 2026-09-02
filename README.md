@@ -1,310 +1,199 @@
-#  Investment Research AI
+# Investment Research AI
 
-Investment Research AI is a full-stack investment research and portfolio tracking platform designed to help users analyze stocks and ETFs using quantitative financial criteria, organize investment ideas, track portfolios, and explore AI-assisted insights.
+Plataforma full-stack para investigación de acciones y ETFs, seguimiento de portafolios y análisis cuantitativo orientado a toma de decisiones.
 
-The platform combines market data, fundamental analysis, portfolio analytics, personalized watchlists, and artificial intelligence in a user-friendly interface.
-
-> **Disclaimer:** This platform is intended for educational and research purposes. The information and scores displayed do not constitute financial advice or a recommendation to buy or sell securities.
+El proyecto combina **Research**, **Watchlist**, **Portfolio**, **Portfolio Lab**, análisis de riesgo y un **Opportunity Engine** que prioriza activos según la composición actual del portafolio del usuario.
 
----
+## Funcionalidades principales
 
-##  Main Features
+### Research
 
-###  Dashboard
+- Búsqueda de acciones y ETFs por ticker o nombre.
+- Información de precio, fundamentales, valoración y riesgo.
+- Gráficos históricos.
+- Investment Score basado en criterios cuantitativos.
+- Comparación de múltiples activos.
+- Análisis asistido por IA.
+- Registro automático de activos consultados en **Research Universe**.
+- Acciones directas desde Research:
+  - Agregar a Watchlist.
+  - Probar en Portfolio Lab.
+  - Ver impacto frente al portafolio actual.
 
-The dashboard provides a quick overview of the investment environment and the user's activity.
+### Research Opportunities
 
-Features include:
+La plataforma no recomienda activos únicamente por tener un score alto.
 
-- Market overview
-- Interactive visualization of major stocks
-- Quick access to stock research
-- Watchlist overview for authenticated users
-- Responsive interface
-- Public access without requiring an account
+El **Opportunity Engine** evalúa candidatos según su encaje con el portafolio actual:
 
----
+- Calidad de inversión.
+- Beneficio de diversificación.
+- Ajuste al perfil de riesgo.
+- Valoración.
+- Crecimiento.
+- Penalización por concentración.
 
-###  Stock & ETF Research
+De esta forma, Research puede priorizar activos que aporten más valor estructural al portafolio, incluso cuando su Investment Score individual sea menor que el de otros candidatos.
 
-The Research module allows users to search for stocks and ETFs using an autocomplete search experience.
+Las oportunidades se obtienen desde el **Research Universe**, no únicamente desde la Watchlist.
 
-For each asset, the platform displays:
+## Watchlist
 
-- Current price
-- Market capitalization
-- P/E ratio
-- Revenue
-- Free float
-- Revenue growth
-- Earnings growth
-- ROE
-- ROA
-- Operating margin
-- Debt-to-equity ratio
-- Current ratio
-- Free cash flow
-- Beta
-- Analyst target price
-- Estimated upside/downside
-- Quantitative score
-- Strengths
-- Risks
-- Missing information
-- AI-generated analysis
+- Watchlist privada por usuario.
+- Persistencia en base de datos.
+- Ranking por Investment Score.
+- Métricas de precio, valoración, crecimiento, riesgo y potencial.
+- Independiente de fallos temporales de proveedores de mercado.
 
-The search system supports dynamic ticker discovery instead of being limited to a predefined list of stocks.
+## Portfolio
 
----
+El módulo Portfolio está dividido en dos entornos independientes:
 
-##  Quantitative Scoring System
+### Real Portfolio
 
-Each company is evaluated using **14 financial and market indicators**.
+Permite analizar las inversiones reales del usuario.
 
-| Indicator | Weight |
-|---|---:|
-| P/E Ratio | 10% |
-| Revenue Growth | 9% |
-| Earnings Growth | 9% |
-| Market Capitalization | 8% |
-| Analyst Target Upside | 8% |
-| Total Revenue | 7% |
-| ROE | 7% |
-| Operating Margin | 7% |
-| Debt / Equity | 7% |
-| Free Cash Flow | 7% |
-| Free Float | 6% |
-| ROA | 5% |
-| Current Ratio | 5% |
-| Beta | 5% |
-| **Total** | **100%** |
+Incluye:
 
-Each available criterion receives an internal score:
+- Valor actual.
+- Capital invertido.
+- P/L.
+- Distribución por activo.
+- Distribución por sector.
+- Concentración.
+- Diversificación.
+- Calidad.
+- Valoración.
+- Crecimiento.
+- Riesgo.
+- Beta ponderada.
+- Evolución histórica estimada.
+- Portfolio Health.
+- Alertas cuantitativas.
+- Oportunidades de investigación personalizadas.
 
--  **Meets criteria:** 100
--  **Review:** 55
--  **Does not meet criteria:** 15
--  **No data:** excluded from the weighted calculation
+Las posiciones repetidas de un mismo ticker se consolidan para el análisis, conservando los lotes originales en la base de datos.
 
-The final score is calculated as:
+### Portfolio Lab
 
-\[
-Score =
-\frac{\sum (CriterionScore_i \times Weight_i)}
-{\sum Weight_i}
-\]
+Entorno completamente simulado para probar ideas sin modificar el portafolio real.
 
-Only indicators with available data participate in the denominator.
+Permite:
 
-### Final classification
+- Crear múltiples mock portfolios.
+- Definir capital inicial.
+- Añadir acciones o ETFs usando montos ficticios.
+- Manejar posiciones fraccionarias.
+- Visualizar allocation.
+- Probar directamente activos enviados desde Research.
+- Ejecutar simulaciones probabilísticas a un año.
 
-| Score | Classification |
-|---|---|
-| ≥ 80 | 🟢 Priority Opportunity |
-| 65–79.9 | 🔵 Watch |
-| 50–64.9 | 🟡 Neutral |
-| < 50 | 🔴 Caution |
+## Simulación Monte Carlo
 
-The score is intended to prioritize companies for further research rather than automatically determine whether an asset should be purchased.
+Portfolio Lab incluye una simulación de aproximadamente:
 
----
+- 252 sesiones futuras.
+- 10.000 trayectorias.
+- Retornos históricos.
+- Volatilidad.
+- Covarianza entre activos.
+- Shocks correlacionados mediante descomposición de Cholesky.
 
-##  Analyst Target Price
+Resultados:
 
-When available, the platform displays the average analyst target price obtained from market data.
+- Bear Scenario — Percentil 5.
+- Base Scenario — Percentil 50.
+- Bull Scenario — Percentil 95.
+- Probabilidad de terminar por encima del valor inicial.
+- Retorno mediano.
+- Volatilidad anualizada.
 
-The potential upside/downside is calculated as:
+La simulación es una herramienta probabilística y educativa; no constituye una predicción garantizada.
 
-\[
-Upside(\%) =
-\frac{TargetPrice - CurrentPrice}
-{CurrentPrice}
-\times 100
-\]
+## SnapTrade — Broker Integration
 
-Current scoring logic:
+El proyecto incorpora una integración con **SnapTrade Commercial** para que cada usuario pueda conectar su propio broker.
 
-| Potential | Evaluation |
-|---|---|
-| ≥ 15% | Meets criteria |
-| 0–14.99% | Review |
-| < 0% | Does not meet criteria |
+La integración está diseñada como **read-only**.
 
-The analyst target price is **not generated by the platform's AI** and should not be interpreted as a guaranteed future price.
+La aplicación puede consultar:
 
----
+- Conexiones.
+- Cuentas.
+- Posiciones.
+- Balances.
+- Efectivo.
+- Estado de sincronización.
 
-##  Personal Watchlist
+La aplicación **no crea, modifica ni cancela órdenes**.
 
-Authenticated users can save stocks and ETFs to a private watchlist.
+Cada usuario autenticado mediante Supabase tiene su propia identidad SnapTrade y conecta únicamente sus propias cuentas.
 
-Instead of displaying only tickers, the watchlist works as a research table containing important information about each saved asset.
-
-Depending on available data, users can review:
-
-- Ticker
-- Company name
-- Short description
-- Current price
-- Market capitalization
-- P/E
-- Growth metrics
-- Financial quality indicators
-- Quantitative score
-- Research status
-
-Watchlists are associated with individual user accounts.
-
-One user's saved assets are not visible to another user.
-
----
-
-##  Portfolio
-
-Authenticated users can create and manage their own investment portfolio.
-
-Users can:
-
-- Add positions
-- Enter ticker
-- Enter quantity
-- Enter average purchase price
-- View current price
-- View market value
-- Calculate unrealized profit/loss
-- Edit positions
-- Delete positions
-- Analyze portfolio concentration
-- Review portfolio diversification
-- Select a risk profile
-- Receive watchlist-based ideas
-
-### Portfolio calculations
-
-Market value:
-
-\[
-MarketValue =
-Quantity \times CurrentPrice
-\]
-
-Cost basis:
-
-\[
-CostBasis =
-Quantity \times AveragePurchasePrice
-\]
-
-Unrealized profit/loss:
-
-\[
-PnL =
-MarketValue - CostBasis
-\]
-
-Percentage return:
-
-\[
-PnL_{\%} =
-\frac{MarketValue-CostBasis}
-{CostBasis}
-\times100
-\]
-
----
-
-##  AI Portfolio Assistant
-
-The platform includes an AI-assisted portfolio analysis layer.
-
-Users can ask questions such as:
-
-- "How can I reduce my exposure to technology?"
-- "Which stocks in my watchlist could improve diversification?"
-- "I want a more conservative portfolio."
-- "What should I research if my goal is long-term growth?"
-
-The assistant receives structured information about:
-
-- Current portfolio
-- User watchlist
-- Risk preference
-- Investment objective
-- Quantitative analysis
-
-The AI is used primarily to **interpret and explain existing information**.
-
-Core financial metrics and quantitative scores are calculated by the backend rather than generated by the language model.
-
----
-
-##  Authentication
-
-Authentication is handled using Supabase Auth.
-
-### Public sections
-
-Users do not need an account to access:
-
-- Dashboard
-- Research
-
-### Private sections
-
-Authentication is required for:
-
-- Watchlist
-- Portfolio
-- Personalized portfolio analysis
-- User-specific saved information
-
-This architecture allows anyone to research investments while keeping personal investment data private.
-
----
-
-##  Architecture
+Arquitectura:
 
 ```text
-                    ┌─────────────────────┐
-                    │       USER          │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │      Next.js        │
-                    │      Frontend       │
-                    └──────────┬──────────┘
-                               │
-                    HTTPS / REST API
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │      FastAPI        │
-                    │      Backend        │
-                    └───────┬─────┬───────┘
-                            │     │
-              ┌─────────────┘     └─────────────┐
-              ▼                                 ▼
-     ┌──────────────────┐             ┌──────────────────┐
-     │   Market Data    │             │      OpenAI      │
-     │ Yahoo / yfinance │             │   AI Analysis    │
-     └──────────────────┘             └──────────────────┘
-              │
-              ▼
-     ┌──────────────────┐
-     │ Quantitative     │
-     │ Scoring Engine   │
-     └──────────────────┘
-
-                    ┌─────────────────────┐
-                    │      Supabase       │
-                    │ Auth + PostgreSQL   │
-                    └─────────────────────┘
+Usuario
+   ↓
+Supabase Auth
+   ↓
+SnapTrade Commercial User
+   ↓
+Connection Portal
+   ↓
+Broker del usuario
+   ↓
+Accounts / Positions / Balances
+   ↓
+Real Portfolio
+   ↓
+Portfolio Health
+   ↓
+Research Opportunities
 ```
 
----
+Los `userSecret` de SnapTrade se almacenan cifrados en backend y nunca se exponen al navegador.
 
-## 🛠️ Technology Stack
+## Arquitectura general
+
+```text
+RESEARCH
+├── Investigación individual
+├── Comparación
+├── Research Universe
+├── Opportunities
+│   └── Personalizadas según Portfolio
+├── Watchlist
+└── IA
+
+PORTFOLIO
+├── Real Portfolio
+│   ├── Manual
+│   └── SnapTrade read-only
+│
+└── Portfolio Lab
+    ├── Mock portfolios
+    └── Monte Carlo
+
+BACKEND
+├── FastAPI
+├── SQLAlchemy
+├── Supabase PostgreSQL
+├── Supabase Auth
+├── Market Data
+├── Opportunity Engine
+├── Research Universe
+├── OpenAI
+└── SnapTrade
+
+FRONTEND
+├── Next.js
+├── React
+├── TypeScript
+├── Tailwind CSS
+└── Recharts
+```
+
+## Stack tecnológico
 
 ### Frontend
 
@@ -312,179 +201,85 @@ This architecture allows anyone to research investments while keeping personal i
 - React
 - TypeScript
 - Tailwind CSS
-- Lucide React
 - Recharts
+- Supabase Auth
 
 ### Backend
 
-- Python
 - FastAPI
+- Python
 - SQLAlchemy
 - Pydantic
-- yfinance
-
-### Database & Authentication
-
-- Supabase
-- PostgreSQL
-- Supabase Auth
-
-### Artificial Intelligence
-
+- PostgreSQL / Supabase
 - OpenAI API
+- SnapTrade API
+- yfinance
 
 ### Deployment
 
-- Vercel — Frontend
-- Render — Backend
-- Supabase — Authentication and database
-- GitHub — Source control and deployment integration
+- Frontend: Vercel
+- Backend: Render
+- Database: Supabase PostgreSQL
 
----
+## Variables de entorno
 
-##  Project Structure
+Nunca subas archivos `.env` al repositorio.
 
-```text
-investment-tracker-platform/
-│
-├── frontend/
-│   ├── app/
-│   │   └── page.tsx
-│   │
-│   ├── components/
-│   │   ├── dashboard.tsx
-│   │   ├── research.tsx
-│   │   ├── watchlist.tsx
-│   │   ├── portfolio.tsx
-│   │   ├── criteria.tsx
-│   │   └── sidebar.tsx
-│   │
-│   ├── lib/
-│   │   └── api.ts
-│   │
-│   ├── package.json
-│   └── next.config.mjs
-│
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   │
-│   │   ├── routers/
-│   │   │   └── ...
-│   │   │
-│   │   └── services/
-│   │       ├── market.py
-│   │       ├── scoring.py
-│   │       └── ...
-│   │
-│   ├── requirements.txt
-│   └── .env
-│
-├── .gitignore
-└── README.md
-```
-
-> The exact structure may evolve as new modules are added.
-
----
-
-#  Local Installation
-
-## 1. Clone the repository
-
-```bash
-git clone YOUR_REPOSITORY_URL
-cd investment-tracker-platform
-```
-
----
-
-#  Backend Setup
-
-Navigate to the backend:
-
-```bash
-cd backend
-```
-
-Create a virtual environment:
-
-### Windows
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Install dependencies:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-Create:
-
-```text
-backend/.env
-```
-
-Example:
+Backend:
 
 ```env
-DATABASE_URL=your_database_connection_string
+DATABASE_URL=
+FRONTEND_ORIGIN=
 
-FRONTEND_ORIGIN=http://localhost:3000
+OPENAI_API_KEY=
+OPENAI_MODEL=
 
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=your_configured_model
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
 
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key
+SNAPTRADE_CLIENT_ID=
+SNAPTRADE_CONSUMER_KEY=
+SNAPTRADE_ENCRYPTION_KEY=
+SNAPTRADE_REDIRECT_URL=
 ```
 
-Never commit the `.env` file.
+Frontend:
 
-Run the API:
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+BACKEND_URL=
+```
 
-```bash
+## Instalación local
+
+### Backend
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
-Backend:
+API:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-FastAPI documentation:
+Swagger:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
----
+### Frontend
 
-#  Frontend Setup
-
-Open another terminal:
-
-```bash
+```powershell
 cd frontend
-```
-
-Install dependencies:
-
-```bash
 npm install
-```
-
-Create the frontend environment configuration required by the application.
-
-For local development, the API should point to the local FastAPI server or use the configured Next.js rewrite.
-
-Run:
-
-```bash
 npm run dev
 ```
 
@@ -494,273 +289,116 @@ Frontend:
 http://localhost:3000
 ```
 
----
+## Endpoints relevantes
 
-#  Environment Variables
-
-Environment variables and API keys must never be committed to GitHub.
-
-The repository should ignore files such as:
-
-```gitignore
-.env
-.env.local
-backend/.env
-frontend/.env.local
-*.db
-__pycache__/
-.venv/
-node_modules/
-.next/
-```
-
-Before pushing changes, verify sensitive files are ignored:
-
-```bash
-git status
-```
-
-On Windows you can also verify a specific file with:
-
-```powershell
-git check-ignore -v backend/.env
-```
-
----
-
-#  Production Deployment
-
-## Frontend — Vercel
-
-The Next.js frontend is deployed through Vercel.
-
-Typical deployment flow:
+### Research
 
 ```text
-GitHub
-   ↓
-Vercel
-   ↓
-Next.js Build
-   ↓
-Production Website
+GET  /stocks/{ticker}
+GET  /stocks/{ticker}/history
+GET  /search
+POST /portfolio/universe/{ticker}
 ```
 
-Every push to the configured production branch can trigger a new deployment.
-
----
-
-## Backend — Render
-
-The FastAPI backend is deployed on Render.
-
-Typical configuration:
+### Watchlist
 
 ```text
-Root Directory:
-backend
+GET    /watchlist
+POST   /watchlist
+DELETE /watchlist/{ticker}
 ```
 
-Build command:
-
-```bash
-pip install -r requirements.txt
-```
-
-Start command:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-Production environment variables must be configured directly in Render rather than committed to the repository.
-
----
-
-## Database — Supabase
-
-Production data is stored in PostgreSQL through Supabase.
-
-The database is used for user-specific information such as:
+### Portfolio
 
 ```text
-User
- ├── Watchlist
- │    ├── AAPL
- │    ├── MSFT
- │    └── VOO
- │
- └── Portfolio
-      ├── Position 1
-      ├── Position 2
-      └── Position 3
+GET    /portfolio
+POST   /portfolio
+PUT    /portfolio/{position_id}
+DELETE /portfolio/{position_id}
+
+GET /portfolio/analysis
+GET /portfolio/history
+GET /portfolio/opportunities
+GET /portfolio/impact/{ticker}
 ```
 
-Each private resource must remain associated with the authenticated user's identity.
-
----
-
-#  Development Workflow
-
-After making changes:
-
-```bash
-git status
-```
-
-Add the files:
-
-```bash
-git add .
-```
-
-Commit:
-
-```bash
-git commit -m "Describe your changes"
-```
-
-Push:
-
-```bash
-git push origin main
-```
-
-If Vercel and Render are connected to the repository, they can automatically deploy the updated frontend and backend.
-
----
-
-#  Security
-
-The project follows several basic security principles:
-
-- API keys are stored in environment variables.
-- `.env` files are excluded from Git.
-- Private portfolio information requires authentication.
-- Watchlists are user-specific.
-- Portfolio positions are user-specific.
-- Public market research does not require authentication.
-- Database credentials are never exposed in frontend code.
-- OpenAI API credentials remain on the backend.
-- Production secrets are configured directly in the deployment providers.
-
-Sensitive credentials must **never** be placed inside:
+### SnapTrade
 
 ```text
-research.tsx
-portfolio.tsx
-page.tsx
-api.ts
-README.md
+GET  /portfolio/broker/status
+POST /portfolio/broker/connect
+POST /portfolio/broker/reconnect/{authorization_id}
+POST /portfolio/broker/sync
+GET  /portfolio/broker/positions
 ```
 
-or any other client-side source file.
+No existen endpoints de trading.
 
----
+## Modelo de scoring
 
-#  Data Sources
+El Investment Score combina múltiples criterios cuantitativos, entre ellos:
 
-The platform currently obtains fundamental and market information primarily through Yahoo Finance using `yfinance`.
+- Market Cap.
+- P/E.
+- Revenue.
+- Free Float.
+- Analyst Upside.
+- Revenue Growth.
+- Earnings Growth.
+- ROE.
+- ROA.
+- Operating Margin.
+- Debt / Equity.
+- Current Ratio.
+- Free Cash Flow.
+- Beta.
 
-Examples include:
+Las métricas sin datos disponibles no penalizan automáticamente el score; se excluyen del denominador cuando corresponde.
 
-```text
-marketCap
-trailingPE
-forwardPE
-totalRevenue
-sharesOutstanding
-floatShares
-targetMeanPrice
-revenueGrowth
-earningsGrowth
-returnOnEquity
-returnOnAssets
-operatingMargins
-debtToEquity
-currentRatio
-freeCashflow
-beta
-```
+## Seguridad
 
-Availability varies by company, ETF, exchange and market.
+- Autenticación mediante Supabase.
+- Watchlist y Portfolio son privados por usuario.
+- `.env` está excluido del repositorio.
+- Consumer keys y secretos se mantienen exclusivamente en backend.
+- SnapTrade funciona en modo read-only.
+- Los secretos individuales de SnapTrade se almacenan cifrados.
+- Portfolio Lab nunca se mezcla con dinero real.
+- No se implementan endpoints de órdenes.
 
-When a metric is unavailable, the quantitative engine can classify it as **No Data** instead of automatically penalizing the company.
+## Estado actual
 
----
+Actualmente están implementados:
 
-#  Methodology Limitations
+- Research completo.
+- Comparador de activos.
+- Watchlist privada.
+- Research Universe.
+- Investment Score.
+- Real Portfolio.
+- Consolidación de lotes.
+- Portfolio Health.
+- Opportunity Engine.
+- Research Opportunities personalizadas.
+- Portfolio Lab.
+- Monte Carlo a un año.
+- Integración Research → Portfolio Lab.
+- Análisis de impacto desde Research.
+- Base de integración SnapTrade read-only.
 
-The quantitative score is intentionally interpretable, but it has limitations.
+## Próximos pasos
 
-For example:
+- Completar flujo de conexión y reconexión de brokers.
+- Mejorar sincronización de balances y cash.
+- Añadir Universe Discovery para encontrar activos que todavía no hayan sido investigados.
+- Ampliar cobertura de ETFs.
+- Incorporar exposición por asset class.
+- Mejorar el análisis de impacto antes/después en Portfolio Lab.
+- Añadir métricas históricas del portafolio sincronizado.
+- Preparar despliegue completo de SnapTrade en producción.
 
-- Financial ratios vary significantly by industry.
-- A P/E considered attractive in one sector may be inappropriate in another.
-- Analyst target prices can change and may be inaccurate.
-- Beta measures historical market sensitivity, not total investment risk.
-- Positive free cash flow alone does not measure how attractive the company's valuation is.
-- Missing data can cause the final score to rely on fewer indicators.
-- Historical performance does not guarantee future returns.
+## Disclaimer
 
-Future versions can improve the model using sector-adjusted benchmarks, valuation multiples, FCF Yield, historical growth consistency and dynamic risk profiles.
+Investment Research AI es una herramienta educativa y de investigación.
 
----
-
-#  Roadmap
-
-Planned or potential improvements include:
-
-- [ ] Sector-adjusted scoring
-- [ ] Dynamic scoring based on investor risk profile
-- [ ] Exact transaction history
-- [ ] Buy/sell transaction ledger
-- [ ] Portfolio performance benchmarks
-- [ ] S&P 500 comparison
-- [ ] Portfolio volatility
-- [ ] Sharpe Ratio
-- [ ] Maximum Drawdown
-- [ ] Correlation matrix
-- [ ] Dividend analysis
-- [ ] FCF Yield
-- [ ] Forward valuation metrics
-- [ ] Historical valuation ranges
-- [ ] Sector diversification analysis
-- [ ] Portfolio rebalancing tools
-- [ ] Improved analyst consensus analysis
-- [ ] AI-assisted investment research reports
-- [ ] Alerts for watchlist changes
-- [ ] Price and fundamental alerts
-
----
-
-#  Project Philosophy
-
-Investment Research AI is designed around three principles:
-
-**1. Research should be understandable.**  
-Users should be able to see why an asset receives a certain score instead of receiving a black-box recommendation.
-
-**2. AI should explain data, not invent it.**  
-Financial calculations are performed using structured market information. AI is used to interpret, summarize and contextualize those results.
-
-**3. Investment decisions require context.**  
-No single metric determines whether an investment is attractive. Valuation, growth, profitability, financial health, market risk and portfolio context should be evaluated together.
-
----
-
-#  Disclaimer
-
-Investment Research AI is an educational and research project.
-
-Nothing displayed by the platform should be interpreted as personalized financial, investment, tax or legal advice.
-
-Scores, analyst targets, AI-generated explanations, portfolio analytics and other outputs may contain errors or rely on incomplete, delayed or inaccurate third-party data.
-
-Users are responsible for performing their own research and evaluating their individual financial circumstances before making investment decisions.
-
----
-
-##  Investment Research AI
-
-**Research. Compare. Track. Understand.**
+La información, scores, simulaciones y oportunidades mostradas por la plataforma no constituyen asesoría financiera personalizada ni garantizan rendimientos futuros.
