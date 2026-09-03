@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import math
+import time
 from typing import Any
 
 import pandas as pd
@@ -14,6 +15,7 @@ from .market_snapshot import load_snapshot, save_snapshot
 QUOTE_TTL_SECONDS = 15 * 60
 FUNDAMENTALS_TTL_SECONDS = 24 * 60 * 60
 SEARCH_TTL_SECONDS = 60 * 60
+YAHOO_RATE_LIMIT_COOLDOWN_SECONDS = 5 * 60
 
 HISTORY_TTL_SECONDS = {
     ("1d", "5m"): 5 * 60,
@@ -26,6 +28,8 @@ HISTORY_TTL_SECONDS = {
     ("2y", "1d"): 12 * 60 * 60,
     ("5y", "1wk"): 24 * 60 * 60,
 }
+
+_yahoo_blocked_until = 0.0
 
 
 def utc_now_iso() -> str:
@@ -51,6 +55,34 @@ def _normalize(symbol: str) -> str:
     return str(symbol or "").strip().upper()
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "rate limit",
+            "rate limited",
+            "too many requests",
+            "429",
+            "yf ratelimit",
+        )
+    )
+
+
+def _mark_yahoo_rate_limited(exc: Exception | None = None) -> None:
+    global _yahoo_blocked_until
+    if exc is not None and not _is_rate_limit_error(exc):
+        return
+    _yahoo_blocked_until = max(
+        _yahoo_blocked_until,
+        time.time() + YAHOO_RATE_LIMIT_COOLDOWN_SECONDS,
+    )
+
+
+def _yahoo_available() -> bool:
+    return time.time() >= _yahoo_blocked_until
+
+
 def _extract_close_series(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
     if frame is None or frame.empty:
         return None
@@ -61,7 +93,11 @@ def _extract_close_series(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
             if (symbol, "Close") in frame.columns:
                 return frame[(symbol, "Close")].dropna()
             if "Close" in frame.columns.get_level_values(0):
-                return frame.xs("Close", axis=1, level=0).iloc[:, 0].dropna()
+                selected = frame.xs("Close", axis=1, level=0)
+                if symbol in selected.columns:
+                    return selected[symbol].dropna()
+                if len(selected.columns) == 1:
+                    return selected.iloc[:, 0].dropna()
         if "Close" in frame.columns:
             return frame["Close"].dropna()
     except Exception:
@@ -69,38 +105,52 @@ def _extract_close_series(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
     return None
 
 
-def _yahoo_quote(symbol: str) -> dict[str, Any] | None:
+def _quote_from_frame(frame: pd.DataFrame, symbol: str) -> dict[str, Any] | None:
+    closes = _extract_close_series(frame, symbol)
+    if closes is None or closes.empty:
+        return None
+    price = safe_num(closes.iloc[-1])
+    previous_close = safe_num(closes.iloc[-2]) if len(closes) >= 2 else None
+    if price is None:
+        return None
+    change_percent = (
+        ((price - previous_close) / previous_close) * 100
+        if previous_close not in (None, 0)
+        else None
+    )
+    return {
+        "price": price,
+        "previous_close": previous_close,
+        "change_percent": change_percent,
+        "provider": "yahoo",
+        "source": "Yahoo Finance via yfinance",
+        "fetched_at": utc_now_iso(),
+    }
+
+
+def _yahoo_quotes_batch(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    if not symbols or not _yahoo_available():
+        return {}
     try:
         frame = yf.download(
-            symbol,
+            tickers=symbols,
             period="5d",
             interval="1d",
             auto_adjust=True,
             progress=False,
             threads=False,
+            group_by="column",
         )
-        closes = _extract_close_series(frame, symbol)
-        if closes is None or closes.empty:
-            return None
-        price = safe_num(closes.iloc[-1])
-        previous_close = safe_num(closes.iloc[-2]) if len(closes) >= 2 else None
-        if price is None:
-            return None
-        change_percent = (
-            ((price - previous_close) / previous_close) * 100
-            if previous_close not in (None, 0)
-            else None
-        )
-        return {
-            "price": price,
-            "previous_close": previous_close,
-            "change_percent": change_percent,
-            "provider": "yahoo",
-            "source": "Yahoo Finance via yfinance",
-            "fetched_at": utc_now_iso(),
-        }
-    except Exception:
-        return None
+    except Exception as exc:
+        _mark_yahoo_rate_limited(exc)
+        return {}
+
+    output: dict[str, dict[str, Any]] = {}
+    for symbol in symbols:
+        quote = _quote_from_frame(frame, symbol)
+        if quote is not None:
+            output[symbol] = quote
+    return output
 
 
 def _alpha_quote(symbol: str) -> dict[str, Any] | None:
@@ -126,27 +176,55 @@ def _alpha_quote(symbol: str) -> dict[str, Any] | None:
     }
 
 
+def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    normalized = []
+    seen = set()
+    for symbol in symbols:
+        item = _normalize(symbol)
+        if item and item not in seen:
+            normalized.append(item)
+            seen.add(item)
+
+    output: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+
+    for symbol in normalized:
+        cached = load_snapshot("quote", symbol, QUOTE_TTL_SECONDS)
+        if isinstance(cached, dict):
+            output[symbol] = cached
+        else:
+            missing.append(symbol)
+
+    yahoo_results = _yahoo_quotes_batch(missing)
+    for symbol, quote in yahoo_results.items():
+        output[symbol] = quote
+        save_snapshot("quote", symbol, quote)
+
+    for symbol in missing:
+        if symbol in output:
+            continue
+        quote = _alpha_quote(symbol)
+        if quote is not None:
+            output[symbol] = quote
+            save_snapshot("quote", symbol, quote)
+
+    return output
+
+
 def get_quote(symbol: str) -> dict[str, Any] | None:
     symbol = _normalize(symbol)
     if not symbol:
         return None
-
-    cached = load_snapshot("quote", symbol, QUOTE_TTL_SECONDS)
-    if isinstance(cached, dict):
-        return cached
-
-    result = _yahoo_quote(symbol)
-    if result is None:
-        result = _alpha_quote(symbol)
-    if result is not None:
-        save_snapshot("quote", symbol, result)
-    return result
+    return get_quotes([symbol]).get(symbol)
 
 
 def _yahoo_fundamentals(symbol: str) -> dict[str, Any] | None:
+    if not _yahoo_available():
+        return None
     try:
         info = yf.Ticker(symbol).info or {}
-    except Exception:
+    except Exception as exc:
+        _mark_yahoo_rate_limited(exc)
         return None
     if not info:
         return None
@@ -238,6 +316,8 @@ def get_fundamentals(symbol: str) -> dict[str, Any] | None:
 
 
 def _yahoo_history(symbol: str, period: str, interval: str) -> list[dict[str, Any]] | None:
+    if not _yahoo_available():
+        return None
     try:
         frame = yf.Ticker(symbol).history(
             period=period,
@@ -246,7 +326,8 @@ def _yahoo_history(symbol: str, period: str, interval: str) -> list[dict[str, An
             actions=False,
             prepost=False,
         )
-    except Exception:
+    except Exception as exc:
+        _mark_yahoo_rate_limited(exc)
         return None
     if frame is None or frame.empty:
         return None
@@ -293,6 +374,23 @@ def _alpha_daily_history(symbol: str) -> list[dict[str, Any]] | None:
     return points or None
 
 
+def _period_days(period: str) -> int | None:
+    return {
+        "1mo": 25,
+        "3mo": 75,
+        "6mo": 150,
+        "1y": 300,
+        "2y": 600,
+    }.get(period)
+
+
+def _has_reasonable_coverage(points: list[dict[str, Any]], period: str) -> bool:
+    minimum = _period_days(period)
+    if minimum is None:
+        return True
+    return len(points) >= minimum * 0.65
+
+
 def get_history(symbol: str, period: str, interval: str) -> dict[str, Any] | None:
     symbol = _normalize(symbol)
     if not symbol:
@@ -307,9 +405,9 @@ def get_history(symbol: str, period: str, interval: str) -> dict[str, Any] | Non
     provider = "yahoo"
     source = "Yahoo Finance via yfinance"
 
-    if points is None and interval in {"1d", "1wk"}:
+    if points is None and interval == "1d":
         alpha_points = _alpha_daily_history(symbol)
-        if alpha_points:
+        if alpha_points and _has_reasonable_coverage(alpha_points, period):
             points = alpha_points
             provider = "alpha_vantage"
             source = "Alpha Vantage"
@@ -338,10 +436,13 @@ def search_yahoo(query: str) -> list[dict[str, Any]]:
     cached = load_snapshot("search", key, SEARCH_TTL_SECONDS)
     if isinstance(cached, list):
         return cached
+    if not _yahoo_available():
+        return []
     try:
         search = yf.Search(q, max_results=10, news_count=0)
         quotes = getattr(search, "quotes", []) or []
-    except Exception:
+    except Exception as exc:
+        _mark_yahoo_rate_limited(exc)
         quotes = []
     results: list[dict[str, Any]] = []
     for item in quotes:
