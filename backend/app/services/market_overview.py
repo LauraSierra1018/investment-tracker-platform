@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from .market_provider import get_fundamentals, get_quote
+from .market_provider import get_quote
 from .market_snapshot import load_snapshot, save_snapshot
 
 
@@ -49,6 +49,17 @@ def _quote_row(symbol: str) -> tuple[dict[str, Any], str | None, str | None]:
     }, quote.get("source"), quote.get("fetched_at")
 
 
+def _cached_market_cap(symbol: str) -> tuple[float | None, str | None, str | None]:
+    fundamentals = load_snapshot("fundamentals", symbol, 24 * 60 * 60)
+    if not isinstance(fundamentals, dict):
+        return None, None, None
+    return (
+        fundamentals.get("market_cap"),
+        fundamentals.get("source"),
+        fundamentals.get("fetched_at"),
+    )
+
+
 def _build_payload() -> dict[str, Any]:
     stocks: list[dict[str, Any]] = []
     indices: list[dict[str, Any]] = []
@@ -56,7 +67,7 @@ def _build_payload() -> dict[str, Any]:
 
     for symbol, company, sector in MAJOR_STOCKS:
         quote, quote_source, quote_fetched_at = _quote_row(symbol)
-        fundamentals = get_fundamentals(symbol) or {}
+        market_cap, fundamentals_source, fundamentals_fetched_at = _cached_market_cap(symbol)
         stocks.append({
             "ticker": symbol,
             "company": company,
@@ -64,13 +75,13 @@ def _build_payload() -> dict[str, Any]:
             "price": quote["price"],
             "previous_close": quote["previous_close"],
             "change_percent": quote["change_percent"],
-            "market_cap": fundamentals.get("market_cap"),
+            "market_cap": market_cap,
         })
         provenance[symbol] = {
             "quote_source": quote_source,
             "quote_fetched_at": quote_fetched_at,
-            "fundamentals_source": fundamentals.get("source"),
-            "fundamentals_fetched_at": fundamentals.get("fetched_at"),
+            "fundamentals_source": fundamentals_source,
+            "fundamentals_fetched_at": fundamentals_fetched_at,
         }
 
     for symbol, name in INDEXES:
