@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Any
-import math
-import time
 
-import pandas as pd
-import yfinance as yf
 from fastapi import HTTPException
+
+from .market_provider import get_quotes
+from .market_snapshot import load_snapshot, save_snapshot
+
 
 MAJOR_STOCKS = [
     ("AAPL", "Apple", "Tecnología"),
@@ -32,189 +31,83 @@ INDEXES = [
     ("^VIX", "VIX"),
 ]
 
-CACHE_SECONDS = 600
-
-_cache: dict[str, Any] = {
-    "expires": 0.0,
-    "data": None,
-}
-
-_lock = Lock()
+CACHE_SECONDS = 10 * 60
 
 
-def _num(value: Any) -> float | None:
-    try:
-        number = float(value)
-        if math.isfinite(number):
-            return number
-    except (TypeError, ValueError):
-        pass
-    return None
-
-
-def _empty_quote() -> dict[str, float | None]:
-    return {
-        "price": None,
-        "previous_close": None,
-        "change_percent": None,
-        "market_cap": None,
-    }
-
-
-def _extract_series(
-    frame: pd.DataFrame,
-    field: str,
-    symbol: str,
-) -> pd.Series | None:
-    if frame is None or frame.empty:
-        return None
-
-    try:
-        if isinstance(frame.columns, pd.MultiIndex):
-            if (field, symbol) in frame.columns:
-                return frame[(field, symbol)].dropna()
-
-            if (symbol, field) in frame.columns:
-                return frame[(symbol, field)].dropna()
-
-        if field in frame.columns:
-            return frame[field].dropna()
-    except Exception:
-        return None
-
-    return None
-
-
-def _batch_quotes(
-    symbols: list[str],
-) -> dict[str, dict[str, float | None]]:
-    if not symbols:
-        return {}
-
-    try:
-        frame = yf.download(
-            tickers=symbols,
-            period="5d",
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            group_by="column",
-            threads=False,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"No fue posible descargar las cotizaciones: {exc}"
-        ) from exc
-
-    output: dict[str, dict[str, float | None]] = {}
-
-    for symbol in symbols:
-        quote = _empty_quote()
-
-        closes = _extract_series(
-            frame=frame,
-            field="Close",
-            symbol=symbol,
-        )
-
-        if closes is not None and not closes.empty:
-            quote["price"] = _num(closes.iloc[-1])
-
-            if len(closes) >= 2:
-                quote["previous_close"] = _num(closes.iloc[-2])
-
-        price = quote["price"]
-        previous_close = quote["previous_close"]
-
-        if (
-            price is not None
-            and previous_close not in (None, 0)
-        ):
-            quote["change_percent"] = (
-                (price - previous_close)
-                / previous_close
-                * 100
-            )
-
-        output[symbol] = quote
-
-    return output
-
-
-def _market_caps(
-    symbols: list[str],
-) -> dict[str, float | None]:
-    result: dict[str, float | None] = {}
-
-    for symbol in symbols:
-        try:
-            fast = yf.Ticker(symbol).fast_info
-            result[symbol] = _num(
-                getattr(fast, "market_cap", None)
-            )
-        except Exception:
-            result[symbol] = None
-
-    return result
+def _cached_market_cap(symbol: str) -> tuple[float | None, str | None, str | None]:
+    fundamentals = load_snapshot("fundamentals", symbol, 24 * 60 * 60)
+    if not isinstance(fundamentals, dict):
+        return None, None, None
+    return (
+        fundamentals.get("market_cap"),
+        fundamentals.get("source"),
+        fundamentals.get("fetched_at"),
+    )
 
 
 def _build_payload() -> dict[str, Any]:
-    stock_symbols = [symbol for symbol, _, _ in MAJOR_STOCKS]
-    index_symbols = [symbol for symbol, _ in INDEXES]
-    all_symbols = stock_symbols + index_symbols
-
-    quotes = _batch_quotes(all_symbols)
-    market_caps = _market_caps(stock_symbols)
+    all_symbols = [symbol for symbol, _, _ in MAJOR_STOCKS] + [
+        symbol for symbol, _ in INDEXES
+    ]
+    quotes = get_quotes(all_symbols)
 
     stocks: list[dict[str, Any]] = []
+    indices: list[dict[str, Any]] = []
+    provenance: dict[str, Any] = {}
 
     for symbol, company, sector in MAJOR_STOCKS:
-        quote = quotes.get(symbol, _empty_quote())
-
-        stocks.append(
-            {
-                "ticker": symbol,
-                "company": company,
-                "sector": sector,
-                "price": quote["price"],
-                "previous_close": quote["previous_close"],
-                "change_percent": quote["change_percent"],
-                "market_cap": market_caps.get(symbol),
-            }
-        )
-
-    indices: list[dict[str, Any]] = []
+        quote = quotes.get(symbol) or {}
+        market_cap, fundamentals_source, fundamentals_fetched_at = _cached_market_cap(symbol)
+        stocks.append({
+            "ticker": symbol,
+            "company": company,
+            "sector": sector,
+            "price": quote.get("price"),
+            "previous_close": quote.get("previous_close"),
+            "change_percent": quote.get("change_percent"),
+            "market_cap": market_cap,
+        })
+        provenance[symbol] = {
+            "quote_source": quote.get("source"),
+            "quote_fetched_at": quote.get("fetched_at"),
+            "fundamentals_source": fundamentals_source,
+            "fundamentals_fetched_at": fundamentals_fetched_at,
+        }
 
     for symbol, name in INDEXES:
-        quote = quotes.get(symbol, _empty_quote())
+        quote = quotes.get(symbol) or {}
+        indices.append({
+            "ticker": symbol,
+            "name": name,
+            "price": quote.get("price"),
+            "previous_close": quote.get("previous_close"),
+            "change_percent": quote.get("change_percent"),
+            "market_cap": None,
+        })
+        provenance[symbol] = {
+            "quote_source": quote.get("source"),
+            "quote_fetched_at": quote.get("fetched_at"),
+        }
 
-        indices.append(
-            {
-                "ticker": symbol,
-                "name": name,
-                "price": quote["price"],
-                "previous_close": quote["previous_close"],
-                "change_percent": quote["change_percent"],
-                "market_cap": None,
-            }
+    if not any(row.get("price") is not None for row in stocks + indices):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No fue posible obtener cotizaciones vigentes del panorama de mercado "
+                "desde Yahoo Finance ni desde Alpha Vantage."
+            ),
         )
 
     valid_changes = [
-        stock["change_percent"]
-        for stock in stocks
-        if stock["change_percent"] is not None
+        row["change_percent"]
+        for row in stocks
+        if row.get("change_percent") is not None
     ]
-
     advancing = sum(1 for value in valid_changes if value > 0)
     declining = sum(1 for value in valid_changes if value < 0)
-
     sorted_stocks = sorted(
-        [
-            stock
-            for stock in stocks
-            if stock["change_percent"] is not None
-        ],
-        key=lambda item: item["change_percent"],
+        [row for row in stocks if row.get("change_percent") is not None],
+        key=lambda row: row["change_percent"],
         reverse=True,
     )
 
@@ -226,77 +119,27 @@ def _build_payload() -> dict[str, Any]:
         "breadth": {
             "advancing": advancing,
             "declining": declining,
-            "unchanged": max(
-                0,
-                len(valid_changes) - advancing - declining,
-            ),
+            "unchanged": max(0, len(valid_changes) - advancing - declining),
         },
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "refresh_seconds": CACHE_SECONDS,
-        "source": "Yahoo Finance via yfinance",
+        "source": "Yahoo Finance primary; Alpha Vantage fallback",
         "stale": False,
         "warning": None,
+        "provenance": provenance,
         "note": (
-            "Las cotizaciones pueden ser en tiempo real o presentar retraso "
-            "según la bolsa y el instrumento."
+            "Cada valor conserva su fuente y momento de consulta. Los campos no "
+            "verificados dentro de su ventana de vigencia se muestran como no disponibles."
         ),
     }
 
 
-def market_overview(
-    force_refresh: bool = False,
-) -> dict[str, Any]:
-    now = time.time()
+def market_overview(force_refresh: bool = False) -> dict[str, Any]:
+    if not force_refresh:
+        cached = load_snapshot("market_overview", "default", CACHE_SECONDS)
+        if isinstance(cached, dict):
+            return cached
 
-    if (
-        not force_refresh
-        and _cache["data"] is not None
-        and now < _cache["expires"]
-    ):
-        return _cache["data"]
-
-    with _lock:
-        now = time.time()
-
-        if (
-            not force_refresh
-            and _cache["data"] is not None
-            and now < _cache["expires"]
-        ):
-            return _cache["data"]
-
-        try:
-            payload = _build_payload()
-
-            _cache["data"] = payload
-            _cache["expires"] = time.time() + CACHE_SECONDS
-
-            return payload
-
-        except Exception as exc:
-            print(
-                "Error actualizando panorama de mercado:",
-                repr(exc),
-            )
-
-            if _cache["data"] is not None:
-                stale_payload = {
-                    **_cache["data"],
-                    "stale": True,
-                    "warning": (
-                        "El proveedor de mercado limitó temporalmente las "
-                        "consultas. Se muestra la última información disponible."
-                    ),
-                }
-
-                _cache["expires"] = time.time() + 60
-                return stale_payload
-
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "El proveedor de mercado está limitando temporalmente "
-                    "las consultas y todavía no existe información en caché. "
-                    "Espera unos minutos e inténtalo de nuevo."
-                ),
-            ) from exc
+    payload = _build_payload()
+    save_snapshot("market_overview", "default", payload)
+    return payload

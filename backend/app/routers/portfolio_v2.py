@@ -12,7 +12,8 @@ from ..auth import AuthUser, get_current_user
 from ..config import settings
 from ..db import get_db
 from ..models import PortfolioPosition
-from ..services.portfolio_v2 import build_analysis, build_history, research_impact
+from ..services.portfolio_v2 import build_analysis, research_impact
+from ..services.portfolio_history import build_history
 from ..services.market import get_stock
 from ..services.research_universe import upsert_research_asset
 from ..services.snaptrade_service import (
