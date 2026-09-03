@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Status = Literal["cumple", "revisar", "no_cumple", "sin_dato"]
@@ -38,7 +38,10 @@ class StockSummary(BaseModel):
     risks: list[str]
     missing_data: list[str]
     updated_at: datetime
-    source: str = "Yahoo Finance via yfinance"
+    source: str
+    stale: bool = False
+    warning: str | None = None
+    provenance: dict[str, Any] = {}
 
 class SearchResult(BaseModel):
     ticker: str
