@@ -6,7 +6,7 @@ from .config import settings
 from .db import Base, engine, get_db
 from .models import WatchlistItem, PortfolioPosition
 from .schemas import *
-from .services.market import get_stock, search, history
+from .services.market import get_stock, history
 from .services.market_overview import market_overview
 from .services.ai import analyze
 from .services.search import search_assets
@@ -28,7 +28,7 @@ app.include_router(portfolio_import_router)
 @app.get("/health")
 def health(): return {"status":"ok"}
 @app.get("/search",response_model=list[SearchResult])
-def stock_search(q:str): return search(q)
+def stock_search(q:str=""): return search_assets(q)
 @app.get("/stocks/{ticker}",response_model=StockSummary)
 def stock_detail(ticker:str): return get_stock(ticker)
 @app.get("/stocks/{ticker}/history")
@@ -355,7 +355,3 @@ def delete_position(
     return {
         "deleted": True
     }
-
-@app.get("/search")
-def search(q: str = ""):
-    return search_assets(q)

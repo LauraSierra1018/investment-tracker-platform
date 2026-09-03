@@ -48,6 +48,7 @@ class SearchResult(BaseModel):
     name: str
     exchange: str | None = None
     type: str | None = None
+    logo_url: str | None = None
 
 class WatchlistCreate(BaseModel):
     ticker: str
