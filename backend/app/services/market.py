@@ -10,6 +10,7 @@ import pandas as pd
 import yfinance as yf
 from fastapi import HTTPException
 
+from .market_fallback import alpha_stock_raw
 from .market_snapshot import load_snapshot, save_snapshot
 from .scoring import evaluate
 
@@ -130,6 +131,35 @@ def _persistent_history(symbol: str, period: str, max_age: int | None = None):
     return data if isinstance(data, list) else None
 
 
+def _alpha_as_yahoo_info(symbol: str) -> dict[str, Any] | None:
+    raw = alpha_stock_raw(symbol)
+    if not raw:
+        return None
+    return {
+        "longName": raw.get("company") or symbol,
+        "longBusinessSummary": raw.get("description"),
+        "exchange": raw.get("exchange"),
+        "currency": raw.get("currency") or "USD",
+        "quoteType": raw.get("quote_type"),
+        "sector": raw.get("sector"),
+        "industry": raw.get("industry"),
+        "currentPrice": raw.get("price"),
+        "previousClose": raw.get("previous_close"),
+        "targetMeanPrice": raw.get("target_price"),
+        "marketCap": raw.get("market_cap"),
+        "trailingPE": raw.get("pe_ratio"),
+        "totalRevenue": raw.get("revenue"),
+        "volume": raw.get("volume"),
+        "beta": raw.get("beta"),
+        "revenueGrowth": (raw.get("revenue_growth_pct") / 100 if raw.get("revenue_growth_pct") is not None else None),
+        "earningsGrowth": (raw.get("earnings_growth_pct") / 100 if raw.get("earnings_growth_pct") is not None else None),
+        "returnOnEquity": (raw.get("roe_pct") / 100 if raw.get("roe_pct") is not None else None),
+        "returnOnAssets": (raw.get("roa_pct") / 100 if raw.get("roa_pct") is not None else None),
+        "operatingMargins": (raw.get("operating_margin_pct") / 100 if raw.get("operating_margin_pct") is not None else None),
+        "_fallback_source": "Alpha Vantage fallback",
+    }
+
+
 def _fetch_info(symbol: str) -> dict[str, Any]:
     if _circuit_open():
         stale = _cache_get_stale(_info_cache, symbol, MAX_STALE_INFO_SECONDS)
@@ -138,7 +168,11 @@ def _fetch_info(symbol: str) -> dict[str, Any]:
         persisted = _persistent_stock(symbol, MAX_STALE_INFO_SECONDS)
         if persisted:
             return {"_persistent_stock": persisted, "_stale": True}
-        raise HTTPException(503, "La fuente de mercado está limitada temporalmente, pero no hay datos previos disponibles para este activo.")
+        fallback = _alpha_as_yahoo_info(symbol)
+        if fallback:
+            _cache_set(_info_cache, symbol, fallback)
+            return fallback
+        return {"longName": symbol, "_fallback_source": "Market data temporarily unavailable", "_stale": True}
 
     try:
         info = yf.Ticker(symbol).info or {}
@@ -154,8 +188,12 @@ def _fetch_info(symbol: str) -> dict[str, Any]:
         persisted = _persistent_stock(symbol, MAX_STALE_INFO_SECONDS)
         if persisted:
             return {"_persistent_stock": persisted, "_stale": True}
+        fallback = _alpha_as_yahoo_info(symbol)
+        if fallback:
+            _cache_set(_info_cache, symbol, fallback)
+            return fallback
         if _looks_like_rate_limit(exc):
-            raise HTTPException(503, "La fuente de mercado está limitada temporalmente, pero no hay datos previos disponibles para este activo.")
+            return {"longName": symbol, "_fallback_source": "Market data temporarily unavailable", "_stale": True}
         raise HTTPException(502, f"No fue posible consultar la fuente de mercado: {exc}")
 
 
@@ -260,6 +298,7 @@ def get_stock(ticker: str):
         persistent_fallback["source"] = persistent_fallback.get("source") or "Persistent market cache"
         return persistent_fallback
 
+    fallback_source = info.pop("_fallback_source", None)
     quote = dict(_get_quote(symbol))
     info_stale = bool(info.pop("_stale", False))
     quote_stale = bool(quote.pop("_stale", False))
@@ -334,12 +373,21 @@ def get_stock(ticker: str):
         "risks": risks,
         "missing_data": missing,
         "updated_at": _utc_now().isoformat(),
-        "source": "Yahoo Finance via yfinance",
+        "source": fallback_source or "Yahoo Finance via yfinance",
         "stale": stale,
-        "warning": ("La fuente de mercado limitó temporalmente las consultas. Se muestran los últimos datos disponibles." if stale else None),
+        "warning": (
+            "Yahoo Finance está limitado temporalmente. Se usó una fuente de respaldo."
+            if fallback_source == "Alpha Vantage fallback"
+            else (
+                "Las fuentes de mercado están limitadas temporalmente. La app seguirá disponible y reintentará la actualización."
+                if fallback_source == "Market data temporarily unavailable"
+                else ("La fuente de mercado limitó temporalmente las consultas. Se muestran los últimos datos disponibles." if stale else None)
+            )
+        ),
     }
 
-    save_snapshot("stock", symbol, result)
+    if price is not None or fallback_source == "Alpha Vantage fallback":
+        save_snapshot("stock", symbol, result)
     return result
 
 
@@ -406,7 +454,7 @@ def history(ticker: str, period="1y"):
             persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
             if persisted is not None:
                 return persisted
-            raise HTTPException(503, "El histórico no puede actualizarse en este momento y no hay una copia persistida disponible.")
+            return []
         try:
             df = yf.Ticker(symbol).history(period=period, interval="1d", auto_adjust=True)
         except Exception as exc:
@@ -414,9 +462,7 @@ def history(ticker: str, period="1y"):
             persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
             if persisted is not None:
                 return persisted
-            if _looks_like_rate_limit(exc):
-                raise HTTPException(503, "El histórico no puede actualizarse en este momento y no hay una copia persistida disponible.")
-            raise HTTPException(502, f"No fue posible consultar el histórico: {exc}")
+            return []
         if df is None or df.empty:
             persisted = _persistent_history(symbol, period, MAX_STALE_HISTORY_SECONDS)
             return persisted if persisted is not None else []
