@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-import yfinance as yf
 from fastapi import HTTPException
 
-from .market_snapshot import load_snapshot, save_snapshot
+from .market_provider import get_history as provider_history
 
 
 RANGE_CONFIG: dict[str, tuple[str, str]] = {
@@ -19,103 +17,47 @@ RANGE_CONFIG: dict[str, tuple[str, str]] = {
     "5Y": ("5y", "1wk"),
 }
 
-FRESH_TTL_SECONDS = {
-    "1D": 5 * 60,
-    "5D": 15 * 60,
-    "1M": 2 * 60 * 60,
-    "6M": 6 * 60 * 60,
-    "YTD": 6 * 60 * 60,
-    "1Y": 12 * 60 * 60,
-    "5Y": 24 * 60 * 60,
-}
-MAX_STALE_SECONDS = 30 * 24 * 60 * 60
-
 
 def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
-    symbol = ticker.strip().upper()
-    requested = range_key.strip().upper()
+    symbol = str(ticker or "").strip().upper()
+    requested = str(range_key or "").strip().upper()
 
     if not symbol:
         raise HTTPException(status_code=400, detail="Ticker requerido.")
-
     if requested not in RANGE_CONFIG:
         raise HTTPException(
             status_code=400,
             detail=f"Rango inválido. Usa uno de: {', '.join(RANGE_CONFIG)}",
         )
 
-    cache_key = f"{symbol}:{requested}"
-    cached = load_snapshot("chart", cache_key, FRESH_TTL_SECONDS[requested])
-    if isinstance(cached, dict):
-        return cached
-
     period, interval = RANGE_CONFIG[requested]
+    data = provider_history(symbol, period, interval)
 
-    try:
-        ticker_obj = yf.Ticker(symbol)
-        frame = ticker_obj.history(
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            actions=False,
-            prepost=False,
+    if data is None:
+        detail = (
+            f"No fue posible obtener precios vigentes para {symbol} desde "
+            "Yahoo Finance ni desde Alpha Vantage."
         )
-    except Exception as exc:
-        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
-        if isinstance(stale, dict):
-            stale = dict(stale)
-            stale["stale"] = True
-            stale["warning"] = "No se pudo actualizar el gráfico. Se muestran los últimos datos disponibles."
-            return stale
-        raise HTTPException(
-            status_code=502,
-            detail=f"No fue posible consultar el histórico de {symbol}: {exc}",
-        ) from exc
+        if interval not in {"1d", "1wk"}:
+            detail += " El respaldo de Alpha Vantage no está habilitado para este intervalo intradía."
+        raise HTTPException(status_code=503, detail=detail)
 
-    if frame is None or frame.empty:
-        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
-        if isinstance(stale, dict):
-            stale = dict(stale)
-            stale["stale"] = True
-            stale["warning"] = "No se pudo actualizar el gráfico. Se muestran los últimos datos disponibles."
-            return stale
+    points = data.get("points") or []
+    if not points:
         raise HTTPException(
             status_code=404,
-            detail=f"No se encontraron precios históricos para {symbol}.",
+            detail=f"No se encontraron precios utilizables para {symbol}.",
         )
 
-    points: list[dict[str, Any]] = []
-    for index, row in frame.iterrows():
-        try:
-            dt = index.to_pydatetime() if hasattr(index, "to_pydatetime") else index
-        except Exception:
-            dt = index
-        timestamp = dt.isoformat() if isinstance(dt, datetime) else str(dt)
-        close = _number(row.get("Close"))
-        if close is None:
-            continue
-        points.append(
-            {
-                "date": timestamp,
-                "open": _number(row.get("Open")),
-                "high": _number(row.get("High")),
-                "low": _number(row.get("Low")),
-                "close": close,
-                "volume": _integer(row.get("Volume")),
-            }
-        )
+    first_close = points[0].get("close")
+    last_close = points[-1].get("close")
+    change_percent = (
+        ((last_close - first_close) / first_close) * 100
+        if first_close not in (None, 0) and last_close is not None
+        else None
+    )
 
-    if not points:
-        stale = load_snapshot("chart", cache_key, MAX_STALE_SECONDS)
-        if isinstance(stale, dict):
-            return stale
-        raise HTTPException(status_code=404, detail=f"No se encontraron precios utilizables para {symbol}.")
-
-    first_close = points[0]["close"]
-    last_close = points[-1]["close"]
-    change_percent = (((last_close - first_close) / first_close) * 100 if first_close not in (None, 0) and last_close is not None else None)
-
-    result = {
+    return {
         "ticker": symbol,
         "range": requested,
         "period": period,
@@ -125,26 +67,9 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
         "last_close": last_close,
         "change_percent": change_percent,
         "points": points,
-        "source": "Yahoo Finance via yfinance",
+        "provider": data.get("provider"),
+        "source": data.get("source"),
+        "fetched_at": data.get("fetched_at"),
         "stale": False,
         "warning": None,
     }
-    save_snapshot("chart", cache_key, result)
-    return result
-
-
-def _number(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        number = float(value)
-        if number != number:
-            return None
-        return number
-    except (TypeError, ValueError):
-        return None
-
-
-def _integer(value: Any) -> int | None:
-    number = _number(value)
-    return int(number) if number is not None else None
