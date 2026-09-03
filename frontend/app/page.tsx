@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   Sidebar,
@@ -39,9 +39,18 @@ const mobileTabs: {
   },
 ];
 
+const validTabs = new Set<Tab>(mobileTabs.map((item) => item.id));
+
 export default function Page() {
   const [tab, setTab] =
     useState<Tab>('dashboard');
+
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+    if (requestedTab && validTabs.has(requestedTab)) {
+      setTab(requestedTab);
+    }
+  }, []);
 
   return (
     <main className="min-h-screen">

@@ -12,3 +12,28 @@
 .space-y-5:has(> nav.card) > section:nth-child(2) {
   order: 100;
 }
+
+/* Portfolio Lab allocation chart.
+   Recharts usa radios fijos en este donut; en la columna angosta del Lab el SVG
+   puede quedar justo contra sus límites y cortar los laterales. Reducimos el pie
+   de forma responsiva y dejamos respirar el SVG sin cambiar los datos. */
+div[class*="xl:grid-cols-[1.3fr_0.7fr]"] > section:nth-child(2) .recharts-wrapper {
+  margin-inline: auto;
+  max-width: 100%;
+}
+
+div[class*="xl:grid-cols-[1.3fr_0.7fr]"] > section:nth-child(2) .recharts-surface {
+  overflow: visible;
+}
+
+div[class*="xl:grid-cols-[1.3fr_0.7fr]"] > section:nth-child(2) .recharts-pie {
+  transform: scale(0.82);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (min-width: 640px) {
+  div[class*="xl:grid-cols-[1.3fr_0.7fr]"] > section:nth-child(2) .recharts-pie {
+    transform: scale(0.88);
+  }
+}
