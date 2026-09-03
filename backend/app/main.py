@@ -6,7 +6,7 @@ from .config import settings
 from .db import Base, engine, get_db
 from .models import WatchlistItem, PortfolioPosition
 from .schemas import *
-from .services.market import get_stock, search, history
+from .services.market import get_stock, history
 from .services.market_overview import market_overview
 from .services.ai import analyze
 from .services.search import search_assets
@@ -28,7 +28,7 @@ app.include_router(portfolio_import_router)
 @app.get("/health")
 def health(): return {"status":"ok"}
 @app.get("/search",response_model=list[SearchResult])
-def stock_search(q:str): return search(q)
+def stock_search(q:str=""): return search_assets(q)
 @app.get("/stocks/{ticker}",response_model=StockSummary)
 def stock_detail(ticker:str): return get_stock(ticker)
 @app.get("/stocks/{ticker}/history")
@@ -259,7 +259,7 @@ def portfolio(
     "/portfolio",
     response_model=PositionOut,
 )
-def add_position(
+def add_portfolio_position(
     body: PositionCreate,
 
     user: AuthUser = Depends(
@@ -268,94 +268,42 @@ def add_position(
 
     db: Session = Depends(get_db),
 ):
+    ticker = body.ticker.strip().upper()
+
     position = PortfolioPosition(
         user_id=user.id,
-
-        ticker=(
-            body.ticker
-            .strip()
-            .upper()
-        ),
-
+        ticker=ticker,
         quantity=body.quantity,
-
-        average_cost=(
-            body.average_cost
-        ),
-
+        average_cost=body.average_cost,
         currency=body.currency,
     )
 
     db.add(position)
-    db.commit()
-    db.refresh(position)
 
-    return PositionOut(
-        id=position.id,
+    try:
+        db.commit()
+        db.refresh(position)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No fue posible guardar la posición.") from exc
 
-        ticker=position.ticker,
-
-        quantity=position.quantity,
-
-        average_cost=(
-            position.average_cost
-        ),
-
-        currency=position.currency,
-
-        created_at=(
-            position.created_at
-        ),
-
-        current_price=None,
-
-        market_value=None,
-
-        unrealized_pnl=None,
-
-        unrealized_pnl_percent=None,
-    )
+    return position
 
 
-@app.delete(
-    "/portfolio/{position_id}"
-)
-def delete_position(
+@app.delete("/portfolio/{position_id}")
+def delete_portfolio_position(
     position_id: int,
-
-    user: AuthUser = Depends(
-        get_current_user
-    ),
-
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     position = db.scalar(
-        select(
-            PortfolioPosition
-        ).where(
-            PortfolioPosition.id
-            == position_id,
-
-            PortfolioPosition.user_id
-            == user.id,
+        select(PortfolioPosition).where(
+            PortfolioPosition.id == position_id,
+            PortfolioPosition.user_id == user.id,
         )
     )
-
     if not position:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "Posición no encontrada."
-            ),
-        )
-
+        raise HTTPException(status_code=404, detail="Posición no encontrada.")
     db.delete(position)
     db.commit()
-
-    return {
-        "deleted": True
-    }
-
-@app.get("/search")
-def search(q: str = ""):
-    return search_assets(q)
+    return {"deleted": True}
