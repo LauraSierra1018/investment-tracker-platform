@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
-from .market_fallback import alpha_request, alpha_stock_raw
+from .market_fallback import alpha_request
 from .market_snapshot import load_snapshot, save_snapshot
 
 
@@ -182,14 +182,35 @@ def _yahoo_fundamentals(symbol: str) -> dict[str, Any] | None:
 
 
 def _alpha_fundamentals(symbol: str) -> dict[str, Any] | None:
-    raw = alpha_stock_raw(symbol)
-    if not raw:
+    overview = alpha_request({"function": "OVERVIEW", "symbol": symbol}) or {}
+    if not overview:
         return None
     return {
-        **raw,
-        "shares_outstanding": None,
+        "company": overview.get("Name") or symbol,
+        "description": overview.get("Description"),
+        "exchange": overview.get("Exchange"),
+        "currency": overview.get("Currency") or "USD",
+        "quote_type": overview.get("AssetType"),
+        "sector": overview.get("Sector"),
+        "industry": overview.get("Industry"),
+        "target_price": safe_num(overview.get("AnalystTargetPrice")),
+        "market_cap": safe_num(overview.get("MarketCapitalization")),
+        "pe_ratio": safe_num(
+            overview.get("PERatio")
+            or overview.get("TrailingPE")
+            or overview.get("ForwardPE")
+        ),
+        "revenue": safe_num(overview.get("RevenueTTM")),
+        "shares_outstanding": safe_num(overview.get("SharesOutstanding")),
         "float_shares": None,
+        "volume": None,
         "average_volume": None,
+        "beta": safe_num(overview.get("Beta")),
+        "revenue_growth_pct": pct(overview.get("QuarterlyRevenueGrowthYOY")),
+        "earnings_growth_pct": pct(overview.get("QuarterlyEarningsGrowthYOY")),
+        "roe_pct": pct(overview.get("ReturnOnEquityTTM")),
+        "roa_pct": pct(overview.get("ReturnOnAssetsTTM")),
+        "operating_margin_pct": pct(overview.get("OperatingMarginTTM")),
         "debt_to_equity": None,
         "current_ratio": None,
         "free_cash_flow": None,
