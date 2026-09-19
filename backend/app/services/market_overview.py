@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from .market_requests import market_budget
 
 from fastapi import HTTPException
 
 from .market_provider import get_quotes
-from .market_snapshot import load_snapshot, save_snapshot
+from .market_snapshot import load_snapshot, save_snapshot, load_snapshots
 
 
 MAJOR_STOCKS = [
@@ -34,8 +35,8 @@ INDEXES = [
 CACHE_SECONDS = 10 * 60
 
 
-def _cached_market_cap(symbol: str) -> tuple[float | None, str | None, str | None]:
-    fundamentals = load_snapshot("fundamentals", symbol, 24 * 60 * 60)
+def _cached_market_cap(symbol: str, snapshots: dict) -> tuple[float | None, str | None, str | None]:
+    fundamentals = snapshots.get(symbol)
     if not isinstance(fundamentals, dict):
         return None, None, None
     return (
@@ -50,6 +51,7 @@ def _build_payload() -> dict[str, Any]:
         symbol for symbol, _ in INDEXES
     ]
     quotes = get_quotes(all_symbols)
+    fundamentals = load_snapshots("fundamentals", [s for s, _, _ in MAJOR_STOCKS], 24 * 60 * 60)
 
     stocks: list[dict[str, Any]] = []
     indices: list[dict[str, Any]] = []
@@ -57,7 +59,7 @@ def _build_payload() -> dict[str, Any]:
 
     for symbol, company, sector in MAJOR_STOCKS:
         quote = quotes.get(symbol) or {}
-        market_cap, fundamentals_source, fundamentals_fetched_at = _cached_market_cap(symbol)
+        market_cap, fundamentals_source, fundamentals_fetched_at = _cached_market_cap(symbol, fundamentals)
         stocks.append({
             "ticker": symbol,
             "company": company,
@@ -134,6 +136,7 @@ def _build_payload() -> dict[str, Any]:
     }
 
 
+@market_budget
 def market_overview(force_refresh: bool = False) -> dict[str, Any]:
     if not force_refresh:
         cached = load_snapshot("market_overview", "default", CACHE_SECONDS)

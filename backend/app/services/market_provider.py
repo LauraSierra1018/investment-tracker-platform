@@ -8,8 +8,9 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from .market_requests import refreshes, yahoo_session, download, remaining_budget
 from .market_fallback import alpha_request
-from .market_snapshot import load_snapshot, save_snapshot
+from .market_snapshot import load_snapshot, save_snapshot, load_snapshots, save_snapshots
 
 
 QUOTE_TTL_SECONDS = 15 * 60
@@ -133,9 +134,7 @@ def _extract_close_series(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
                 selected = frame.xs("Close", axis=1, level=0)
                 if symbol in selected.columns:
                     return selected[symbol].dropna()
-                if len(selected.columns) == 1:
-                    return selected.iloc[:, 0].dropna()
-        if "Close" in frame.columns:
+        if not isinstance(frame.columns, pd.MultiIndex) and "Close" in frame.columns:
             return frame["Close"].dropna()
     except Exception:
         return None
@@ -170,14 +169,12 @@ def _yahoo_quotes_batch(symbols: list[str]) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
-        frame = yf.download(
+        frame = download(yf,
             tickers=symbols,
             period="5d",
             interval="1d",
             auto_adjust=True,
             progress=False,
-            threads=False,
-            group_by="column",
         )
     except Exception as exc:
         _mark_yahoo_rate_limited(exc)
@@ -213,7 +210,7 @@ def _alpha_quote(symbol: str) -> dict[str, Any] | None:
     }
 
 
-def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+def _load_get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     normalized: list[str] = []
     seen: set[str] = set()
 
@@ -226,8 +223,9 @@ def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     output: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
 
+    cached_quotes = load_snapshots("quote", normalized, QUOTE_TTL_SECONDS)
     for symbol in normalized:
-        cached = load_snapshot("quote", symbol, QUOTE_TTL_SECONDS)
+        cached = cached_quotes.get(symbol)
         if isinstance(cached, dict):
             output[symbol] = cached
         else:
@@ -236,16 +234,19 @@ def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     yahoo_results = _yahoo_quotes_batch(missing)
     for symbol, quote in yahoo_results.items():
         output[symbol] = quote
-        save_snapshot("quote", symbol, quote)
 
+    fresh_quotes = dict(yahoo_results)
     for symbol in missing:
+        if remaining_budget() <= 0:
+            break
         if symbol in output:
             continue
         quote = _alpha_quote(symbol)
         if quote is not None:
             output[symbol] = quote
-            save_snapshot("quote", symbol, quote)
+            fresh_quotes[symbol] = quote
 
+    save_snapshots("quote", fresh_quotes)
     return output
 
 
@@ -261,7 +262,7 @@ def _yahoo_fundamentals(symbol: str) -> dict[str, Any] | None:
         return None
 
     try:
-        info = yf.Ticker(symbol).info or {}
+        info = yf.Ticker(symbol, session=yahoo_session).info or {}
     except Exception as exc:
         _mark_yahoo_rate_limited(exc)
         return None
@@ -336,7 +337,7 @@ def _alpha_fundamentals(symbol: str) -> dict[str, Any] | None:
     }
 
 
-def get_fundamentals(symbol: str) -> dict[str, Any] | None:
+def _load_get_fundamentals(symbol: str) -> dict[str, Any] | None:
     symbol = _normalize(symbol)
     if not symbol:
         return None
@@ -358,12 +359,13 @@ def _yahoo_history(symbol: str, period: str, interval: str) -> list[dict[str, An
         return None
 
     try:
-        frame = yf.Ticker(symbol).history(
+        frame = yf.Ticker(symbol, session=yahoo_session).history(
             period=period,
             interval=interval,
             auto_adjust=False,
             actions=False,
             prepost=False,
+            timeout=6,
         )
     except Exception as exc:
         _mark_yahoo_rate_limited(exc)
@@ -372,6 +374,12 @@ def _yahoo_history(symbol: str, period: str, interval: str) -> list[dict[str, An
     if frame is None or frame.empty:
         return None
 
+    return _frame_points(frame)
+
+
+def _frame_points(frame):
+    if frame is None or frame.empty:
+        return None
     points: list[dict[str, Any]] = []
     for index, row in frame.iterrows():
         close = safe_num(row.get("Close"))
@@ -432,7 +440,7 @@ def _has_reasonable_coverage(points: list[dict[str, Any]], period: str) -> bool:
     return len(points) >= minimum * 0.65
 
 
-def get_history(symbol: str, period: str, interval: str) -> dict[str, Any] | None:
+def _load_get_history(symbol: str, period: str, interval: str) -> dict[str, Any] | None:
     symbol = _normalize(symbol)
     if not symbol:
         return None
@@ -490,7 +498,7 @@ def _alpha_search(query: str) -> list[dict[str, Any]]:
     return results[:10]
 
 
-def search_yahoo(query: str) -> list[dict[str, Any]]:
+def _load_search_yahoo(query: str) -> list[dict[str, Any]]:
     q = str(query or "").strip()
     if not q:
         return []
@@ -503,7 +511,7 @@ def search_yahoo(query: str) -> list[dict[str, Any]]:
     quotes: list[dict[str, Any]] = []
     if _yahoo_available():
         try:
-            search = yf.Search(q, max_results=10, news_count=0)
+            search = yf.Search(q, max_results=10, news_count=0, session=yahoo_session, timeout=6)
             quotes = getattr(search, "quotes", []) or []
         except Exception as exc:
             _mark_yahoo_rate_limited(exc)
@@ -529,3 +537,104 @@ def search_yahoo(query: str) -> list[dict[str, Any]]:
     if results:
         save_snapshot("search", key, results)
     return results
+
+
+def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    symbols = sorted({_normalize(s) for s in symbols if _normalize(s)})
+    cached = load_snapshots("quote", symbols, QUOTE_TTL_SECONDS)
+    missing = [s for s in symbols if s not in cached]
+    if missing:
+        fresh = refreshes.get(("quotes", *missing), lambda: _load_get_quotes(missing), {})
+        cached.update(fresh)
+    return cached
+
+
+def get_fundamentals(symbol: str) -> dict[str, Any] | None:
+    symbol = _normalize(symbol)
+    if not symbol:
+        return None
+    cached = load_snapshot("fundamentals", symbol, FUNDAMENTALS_TTL_SECONDS)
+    if cached is not None:
+        return cached
+    return refreshes.get(("fundamentals", symbol), lambda: _load_get_fundamentals(symbol))
+
+
+def get_history(symbol: str, period: str, interval: str) -> dict[str, Any] | None:
+    symbol = _normalize(symbol)
+    if not symbol:
+        return None
+    ttl = HISTORY_TTL_SECONDS.get((period, interval), 6 * 60 * 60)
+    cached = load_snapshot("provider_history", f"{symbol}:{period}:{interval}", ttl)
+    if cached is not None:
+        return cached
+    return refreshes.get(("history", symbol, period, interval),
+                         lambda: _load_get_history(symbol, period, interval))
+
+
+def search_yahoo(query: str) -> list[dict[str, Any]]:
+    query = str(query or "").strip()
+    if not query:
+        return []
+    cached = load_snapshot("search", query.lower(), SEARCH_TTL_SECONDS)
+    if cached is not None:
+        return cached
+    return refreshes.get(("search", query.lower()), lambda: _load_search_yahoo(query), [])
+
+
+def _history_frame(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Keep only this ticker's actual observations, without filling other trading days."""
+    if frame is None or frame.empty or not isinstance(frame.columns, pd.MultiIndex):
+        return pd.DataFrame()
+    if symbol not in frame.columns.get_level_values(0):
+        return pd.DataFrame()
+    selected = frame[symbol]
+    if "Close" not in selected.columns:
+        return pd.DataFrame()
+    return selected.dropna(subset=["Close"]).sort_index()
+
+
+def _load_histories(symbols, period, interval):
+    ttl = HISTORY_TTL_SECONDS.get((period, interval), 6 * 60 * 60)
+    keys = {s: f"{s}:{period}:{interval}" for s in symbols}
+    cached = load_snapshots("provider_history", list(keys.values()), ttl)
+    output = {s: cached[k] for s, k in keys.items() if k in cached}
+    missing = [s for s in symbols if s not in output]
+    if not missing:
+        return output
+    frame = None
+    if _yahoo_available():
+        try:
+            frame = download(yf, tickers=missing, period=period, interval=interval,
+                             auto_adjust=False, actions=False, progress=False)
+        except Exception as exc:
+            _mark_yahoo_rate_limited(exc)
+    fresh = {}
+    for symbol in missing:
+        selected = _history_frame(frame, symbol)
+        points = _frame_points(selected)
+        provider, source = "yahoo", "Yahoo Finance via yfinance"
+        if not points and interval == "1d" and remaining_budget() > 0:
+            alpha = _alpha_daily_history(symbol)
+            if alpha and _has_reasonable_coverage(alpha, period):
+                points = alpha
+                provider, source = "alpha_vantage", "Alpha Vantage"
+        if points:
+            result = {"ticker": symbol, "period": period, "interval": interval,
+                      "points": points, **_stamp(provider, source, ttl)}
+            output[symbol] = result
+            fresh[keys[symbol]] = result
+    save_snapshots("provider_history", fresh)
+    return output
+
+
+def get_histories(symbols: list[str], period: str, interval: str) -> dict[str, Any]:
+    symbols = sorted({_normalize(s) for s in symbols if _normalize(s)})
+    ttl = HISTORY_TTL_SECONDS.get((period, interval), 6 * 60 * 60)
+    keys = {s: f"{s}:{period}:{interval}" for s in symbols}
+    cached = load_snapshots("provider_history", list(keys.values()), ttl)
+    output = {s: cached[k] for s, k in keys.items() if k in cached}
+    missing = [s for s in symbols if s not in output]
+    if missing:
+        output.update(refreshes.get(("histories", period, interval, *missing),
+                                    lambda: _load_histories(missing, period, interval), {}))
+    return output

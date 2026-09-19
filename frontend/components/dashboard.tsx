@@ -413,16 +413,13 @@ async function loadWatchlist() {
       /*
        * El mercado siempre se actualiza.
        */
-      await loadMarket();
-
-      /*
-       * La watchlist SOLO si hay sesión.
-       */
-      if (user) {
-        await loadWatchlist();
-      } else {
-        setWatchlist([]);
-      }
+      // A slow/unavailable market overview must not prevent the watchlist load.
+      const results = await Promise.allSettled([
+        loadMarket(),
+        user ? loadWatchlist() : Promise.resolve(setWatchlist([])),
+      ]);
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
     } catch (error: any) {
       console.error(
         'Error cargando dashboard:',

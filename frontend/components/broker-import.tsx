@@ -8,8 +8,14 @@ import { RequireAuth } from '@/components/require-auth';
 
 type ImportPosition = {
   ticker: string;
-  quantity: number;
-  average_cost: number;
+  quantity: number | null;
+  issues?: string[];
+  source_page?: number;
+  evidence?: string;
+  cost_evidence?: string | null;
+  supported?: boolean;
+  average_cost: number | null;
+  market_value?: number | null;
   currency: string;
   company?: string | null;
   asset_type?: string | null;
@@ -23,6 +29,8 @@ type ImportPreview = {
   currency: string;
   positions: ImportPosition[];
   warnings: string[];
+  requires_review?: boolean;
+  statement_date?: string | null;
   read_only: boolean;
 };
 
@@ -53,6 +61,9 @@ export function BrokerImportPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [reviewed, setReviewed] = useState(false);
+
+  const invalidPositions = preview?.positions.some((p) => !p.ticker.trim() || !p.quantity || !Number.isFinite(p.quantity) || p.quantity <= 0 || p.average_cost === null || !Number.isFinite(p.average_cost) || p.average_cost < 0 || !/^[A-Z]{3}$/.test(p.currency) || (preview.requires_review && (p.supported === false || !p.asset_type || p.last_price == null || !Number.isFinite(p.last_price) || p.last_price < 0))) ?? true;
 
   async function analyze() {
     if (!file) {
@@ -60,6 +71,8 @@ export function BrokerImportPanel({
       return;
     }
 
+    setPreview(null);
+    setReviewed(false);
     setLoading(true);
     setError('');
     setSuccess('');
@@ -83,10 +96,12 @@ export function BrokerImportPanel({
   }
 
   function updatePosition(index: number, patch: Partial<ImportPosition>) {
+    setReviewed(false);
     setPreview((current) => {
       if (!current) return current;
       const positions = [...current.positions];
       positions[index] = { ...positions[index], ...patch };
+      if ('quantity' in patch || 'last_price' in patch) positions[index].market_value = null;
       return { ...current, positions };
     });
   }
@@ -98,6 +113,10 @@ export function BrokerImportPanel({
       return;
     }
 
+    if (invalidPositions || (preview.requires_review && !reviewed)) {
+      setError('Completa los datos pendientes y revisa las posiciones antes de importar.');
+      return;
+    }
     setSaving(true);
     setError('');
 
@@ -112,8 +131,8 @@ export function BrokerImportPanel({
             positions: preview.positions.map((position) => ({
               ticker: position.ticker,
               quantity: Number(position.quantity),
-              average_cost: Number(position.average_cost || 0),
-              currency: position.currency || preview.currency || 'USD',
+              average_cost: position.average_cost,
+              currency: position.currency,
               company: position.company || position.ticker,
               asset_type: position.asset_type || null,
               last_price: position.last_price ?? null,
@@ -175,7 +194,7 @@ export function BrokerImportPanel({
         <FileUp size={28} className="text-slate-400" />
         <span className="mt-3 font-black">{file ? file.name : 'Seleccionar PDF, CSV o Excel'}</span>
         <span className="mt-1 text-xs text-slate-400">
-          Solo se extraen posiciones; nunca se ejecutan órdenes.
+          Los PDF se envían a OpenAI para leer texto e imágenes. Revisa los datos extraídos antes de importar.
         </span>
         <input
           type="file"
@@ -207,7 +226,7 @@ export function BrokerImportPanel({
             <div>
               <h3 className="text-lg font-black">Revisar antes de importar</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Confirma que cantidades y costos correspondan al estado de cuenta.
+                Confirma el activo, su tipo, moneda, cantidad y costo con las páginas indicadas del informe.
               </p>
             </div>
           </div>
@@ -244,16 +263,28 @@ export function BrokerImportPanel({
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
                 <tr>
+                  <th className="px-3 py-3">Activo / fuente</th>
+                  <th className="px-3 py-3">Tipo</th>
                   <th className="px-3 py-3">Ticker</th>
                   <th className="px-3 py-3">Cantidad</th>
                   <th className="px-3 py-3">Costo promedio</th>
                   <th className="px-3 py-3">Moneda</th>
-                  <th className="px-3 py-3">Precio actual</th>
+                  <th className="px-3 py-3">Precio al cierre</th>
+                  <th className="px-3 py-3">Valor de mercado</th>
+                  <th className="px-3 py-3">Total invertido</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.positions.map((position, index) => (
                   <tr key={`${position.ticker}-${index}`} className="border-t">
+                    <td className="p-2 min-w-64">
+                      <p className="font-bold">{position.company || position.ticker}</p>
+                      {position.source_page && <p className="text-xs">Página {position.source_page}{preview.statement_date ? ` · ${preview.statement_date}` : ''}</p>}
+                      {position.evidence && <details className="text-xs mt-1"><summary>Ver origen</summary><p>{position.evidence}</p>{position.cost_evidence && <p>{position.cost_evidence}</p>}</details>}
+                      {position.issues?.map((issue) => <p key={issue} className="text-xs text-amber-800 mt-1">{issue}</p>)}
+                      <button className="text-xs text-rose-700 mt-2" onClick={() => { setReviewed(false); setPreview({ ...preview, positions: preview.positions.filter((_, i) => i !== index) }); }}>Excluir posición</button>
+                    </td>
+                    <td className="p-2">{position.supported === false ? <span>{position.asset_type} · requiere soporte específico</span> : <select className="rounded-lg border p-2" value={position.asset_type || ''} onChange={(e) => updatePosition(index, { asset_type: e.target.value })}><option value="">Sin clasificar</option><option value="STOCK">Acción</option><option value="ETF">ETF</option><option value="FUND">Fondo</option><option value="CRYPTO">Cripto</option></select>}</td>
                     <td className="p-2">
                       <input
                         className="w-28 rounded-lg border px-2 py-2 font-bold"
@@ -266,8 +297,8 @@ export function BrokerImportPanel({
                         type="number"
                         step="any"
                         className="w-28 rounded-lg border px-2 py-2"
-                        value={position.quantity}
-                        onChange={(e) => updatePosition(index, { quantity: Number(e.target.value) })}
+                        value={position.quantity ?? ''}
+                        onChange={(e) => updatePosition(index, { quantity: e.target.value === '' ? null : Number(e.target.value) })}
                       />
                     </td>
                     <td className="p-2">
@@ -275,8 +306,10 @@ export function BrokerImportPanel({
                         type="number"
                         step="any"
                         className="w-32 rounded-lg border px-2 py-2"
-                        value={position.average_cost}
-                        onChange={(e) => updatePosition(index, { average_cost: Number(e.target.value) })}
+                        value={position.average_cost ?? ''}
+                        placeholder="Costo pendiente"
+                        min="0"
+                        onChange={(e) => updatePosition(index, { average_cost: e.target.value === '' ? null : Number(e.target.value) })}
                       />
                     </td>
                     <td className="p-2">
@@ -299,12 +332,15 @@ export function BrokerImportPanel({
                         }
                       />
                     </td>
+                    <td className="p-2">{position.market_value?.toFixed(2) ?? (position.last_price == null ? '—' : ((position.quantity ?? 0) * position.last_price).toFixed(2))} {position.currency}</td>
+                    <td className="p-2">{position.average_cost == null ? 'Pendiente' : `${((position.quantity ?? 0) * position.average_cost).toFixed(2)} ${position.currency}`}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
+          {preview.requires_review && preview.positions.length > 0 && <label className="mt-5 flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />Revisé las fuentes, corregí los datos pendientes y confirmé los activos que quiero importar.</label>}
           {preview.positions.length === 0 ? (
             <p className="mt-5 text-sm text-slate-500">
               No se detectaron posiciones. Para este documento conviene exportar CSV/XLSX desde el broker.
@@ -312,7 +348,7 @@ export function BrokerImportPanel({
           ) : (
             <button
               onClick={confirmImport}
-              disabled={saving}
+              disabled={saving || invalidPositions || Boolean(preview.requires_review && !reviewed)}
               className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white disabled:opacity-50"
             >
               {saving && <Loader2 size={16} className="animate-spin" />}

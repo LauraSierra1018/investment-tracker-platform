@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from .market_requests import market_budget
 
 from fastapi import HTTPException
 
@@ -51,6 +52,7 @@ def _first(*values: Any) -> Any:
     return None
 
 
+@market_budget
 def get_stock(ticker: str) -> dict[str, Any]:
     symbol = _normalize_symbol(ticker)
 

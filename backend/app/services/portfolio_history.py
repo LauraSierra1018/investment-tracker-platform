@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any
+from .market_requests import market_budget
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import BrokerPosition, PortfolioPosition
-from .market_provider import get_history as provider_history
+from .market_provider import get_histories
 
 
 PERIODS = {
@@ -49,6 +50,7 @@ def _number(value: Any) -> float | None:
     return None
 
 
+@market_budget
 def build_history(db: Session, user_id: str, range_name: str):
     positions = _positions(db, user_id)
     if not positions:
@@ -69,8 +71,9 @@ def build_history(db: Session, user_id: str, range_name: str):
     provenance: dict[str, Any] = {}
     unavailable: list[str] = []
 
+    histories = get_histories(list(quantities), period, "1d")
     for ticker, quantity in sorted(quantities.items()):
-        data = provider_history(ticker, period, "1d")
+        data = histories.get(ticker)
         if not data or not data.get("points"):
             unavailable.append(ticker)
             continue

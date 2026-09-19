@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 import pandas as pd
-from pypdf import PdfReader
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
@@ -24,13 +23,6 @@ COLUMN_ALIASES = {
     "company": ["name", "company", "description", "nombre", "empresa", "security name"],
     "asset_type": ["asset_type", "asset type", "type", "tipo"],
 }
-
-PDF_STOPWORDS = {
-    "TOTAL", "ACCOUNT", "STATEMENT", "CASH", "BALANCE", "DATE", "PRICE", "VALUE",
-    "CURRENCY", "QUANTITY", "DESCRIPTION", "MARKET", "COST", "PORTFOLIO", "HAPI",
-    "TRII", "USD", "COP", "ETF", "STOCK", "EQUITY", "ACCIONES", "ACTIVO", "VALOR",
-}
-
 
 def _text(value: Any) -> str:
     if value is None:
@@ -145,66 +137,17 @@ def _rows_from_dataframe(df: pd.DataFrame, default_currency: str) -> list[dict[s
     return output
 
 
-def _read_pdf(contents: bytes) -> str:
-    reader = PdfReader(BytesIO(contents))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
-
-
-def _rows_from_pdf(text: str, default_currency: str) -> list[dict[str, Any]]:
-    output: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for line in text.splitlines():
-        clean = " ".join(line.split())
-        if not clean:
-            continue
-
-        tokens = clean.split()
-        ticker = None
-        ticker_index = -1
-        for idx, token in enumerate(tokens):
-            candidate = token.strip("()[],:;").upper()
-            if re.fullmatch(r"[A-Z][A-Z0-9.\-]{1,11}", candidate) and candidate not in PDF_STOPWORDS:
-                ticker = candidate
-                ticker_index = idx
-                break
-
-        if not ticker or ticker in seen:
-            continue
-
-        numbers = [_number(token) for token in tokens[ticker_index + 1:]]
-        numbers = [number for number in numbers if number is not None]
-        if not numbers:
-            continue
-
-        quantity = numbers[0]
-        if quantity is None or quantity <= 0:
-            continue
-
-        average_cost = numbers[1] if len(numbers) >= 2 and numbers[1] >= 0 else 0.0
-        last_price = numbers[2] if len(numbers) >= 3 and numbers[2] >= 0 else None
-
-        output.append({
-            "ticker": ticker,
-            "quantity": quantity,
-            "average_cost": average_cost,
-            "currency": default_currency,
-            "company": ticker,
-            "asset_type": None,
-            "last_price": last_price,
-            "confidence": 0.62,
-        })
-        seen.add(ticker)
-
-    return output
-
-
 def preview_statement(filename: str, contents: bytes) -> dict[str, Any]:
     suffix = Path(filename).suffix.lower()
     if suffix not in {".pdf", ".csv", ".xlsx", ".xls"}:
         raise ValueError("Formato no soportado. Usa PDF, CSV, XLSX o XLS.")
 
-    text = _read_pdf(contents) if suffix == ".pdf" else ""
+    if suffix == ".pdf":
+        from ..config import settings
+        from .statement_pdf import extract_pdf
+        return extract_pdf(filename, contents, api_key=settings.openai_api_key,
+                           model=settings.openai_model)
+    text = ""
     broker = detect_broker(filename, text)
     default_currency = "COP" if broker in {"trii", "tyba"} else "USD"
     warnings: list[str] = []
@@ -223,11 +166,6 @@ def preview_statement(filename: str, contents: bytes) -> dict[str, Any]:
             if candidate:
                 positions = candidate
                 break
-    else:
-        positions = _rows_from_pdf(text, default_currency)
-        if positions:
-            warnings.append("Las filas de PDF se detectan heurísticamente. Revisa ticker, cantidad y costo antes de confirmar.")
-
     if not positions:
         warnings.append("No se detectaron posiciones automáticamente. Prueba CSV/XLSX o un estado de cuenta con texto seleccionable.")
 
@@ -257,6 +195,8 @@ def import_snapshot(
     account_name: str,
     positions: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    if any(_number(p.get("average_cost")) is None for p in positions):
+        raise ValueError("Completa el costo promedio de todas las posiciones antes de importar.")
     broker_slug = _slug(broker or "generic")
     account_slug = _slug(account_name or "main")
     account_id = f"import:{broker_slug}:{account_slug}"

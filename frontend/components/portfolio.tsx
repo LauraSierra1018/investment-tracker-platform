@@ -353,11 +353,15 @@ function RealPortfolio() {
       if (showRefreshing) setRefreshing(true);
       setError('');
 
-      await Promise.all([
+      const results = await Promise.allSettled([
         loadPortfolio(),
         loadAnalysis(),
         loadHistory(),
       ]);
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') {
+        setError(failed.reason?.message || 'Algunos datos no están disponibles. Puedes seguir usando las secciones que cargaron.');
+      }
     } catch (e: any) {
       setError(e?.message || 'No fue posible cargar tu portafolio.');
     } finally {

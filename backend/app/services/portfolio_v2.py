@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any
+from .market_requests import market_budget
 import math
 
-import yfinance as yf
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -149,6 +149,9 @@ def enrich_positions(db: Session, positions):
 
         if price is None and stored_asset is not None:
             price = safe_float(stored_asset.last_price)
+
+        if price is None and isinstance(position, BrokerPosition):
+            price = safe_float(position.last_price)
 
         invested = float(position.quantity) * float(position.average_cost)
 
@@ -909,6 +912,7 @@ def recommendations(db: Session, profile: str, enriched):
 
 
 
+@market_budget
 def research_impact(
     db: Session,
     user_id: str,
@@ -967,6 +971,7 @@ def research_impact(
         ),
     }
 
+@market_budget
 def build_analysis(db, user_id, profile):
     positions = user_positions(db, user_id)
     portfolio_source = (
@@ -1050,83 +1055,6 @@ PERIODS = {
 
 
 def build_history(db, user_id, range_name):
-    positions = user_positions(db, user_id)
-
-    if not positions:
-        return {"range": range_name, "points": []}
-
-    period = PERIODS.get(range_name, "3mo")
-
-    # Consolidamos cantidades por ticker antes de construir la serie.
-    quantities: dict[str, float] = defaultdict(float)
-
-    for position in positions:
-        ticker = str(position.ticker).strip().upper()
-        quantities[ticker] += float(position.quantity)
-
-    series = {}
-    all_dates = set()
-
-    for ticker, quantity in quantities.items():
-        try:
-            frame = yf.Ticker(ticker).history(
-                period=period,
-                interval="1d",
-                auto_adjust=False,
-            )
-
-            if frame.empty:
-                continue
-
-            closes = frame["Close"].dropna()
-
-            if closes.empty:
-                continue
-
-            series[ticker] = (
-                closes,
-                quantity,
-            )
-
-            all_dates.update(closes.index)
-
-        except Exception:
-            continue
-
-    last_prices = {}
-    points = []
-
-    for date in sorted(all_dates):
-        total = 0.0
-        has_value = False
-
-        for ticker, (closes, quantity) in series.items():
-            if date in closes.index:
-                price = safe_float(closes.loc[date])
-
-                if price is not None:
-                    last_prices[ticker] = price
-
-            price = last_prices.get(ticker)
-
-            if price is not None:
-                total += price * quantity
-                has_value = True
-
-        if has_value:
-            dt = (
-                date.to_pydatetime()
-                if hasattr(date, "to_pydatetime")
-                else date
-            )
-
-            points.append({
-                "date": dt.isoformat(),
-                "value": round(total, 2),
-            })
-
-    return {
-        "range": range_name,
-        "points": points,
-    }
-
+    # Compatibility entry point uses the same cached provider as the active router.
+    from .portfolio_history import build_history as cached_history
+    return cached_history(db, user_id, range_name)

@@ -37,7 +37,7 @@ class StockSummary(BaseModel):
     strengths: list[str]
     risks: list[str]
     missing_data: list[str]
-    updated_at: datetime
+    updated_at: datetime | None = None
     source: str
     stale: bool = False
     warning: str | None = None

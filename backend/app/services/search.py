@@ -1,11 +1,7 @@
 from typing import Dict, List
 
-import httpx
-
 from .market_provider import search_yahoo
 
-
-YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 
 DEFAULT_SUGGESTIONS: List[Dict] = [
     {"ticker": "AAPL", "name": "Apple Inc.", "type": "Stock", "exchange": "NASDAQ"},
@@ -48,47 +44,6 @@ def _with_logo(item: dict) -> Dict:
     }
 
 
-def _direct_yahoo_search(query: str) -> List[Dict]:
-    """Autocomplete fallback using Yahoo's lightweight search endpoint.
-
-    This endpoint only resolves symbols/names; it does not fetch quotes or
-    fundamentals, so it is intentionally independent from the market-data
-    rate-limit circuit.
-    """
-    try:
-        response = httpx.get(
-            YAHOO_SEARCH_URL,
-            params={
-                "q": query,
-                "quotesCount": 10,
-                "newsCount": 0,
-                "enableFuzzyQuery": "true",
-                "quotesQueryId": "tss_match_phrase_query",
-                "multiQuoteQueryId": "multi_quote_single_token_query",
-            },
-            headers={"User-Agent": "Mozilla/5.0 InvestmentResearchAI/1.0"},
-            timeout=6.0,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except Exception:
-        return []
-
-    output: List[Dict] = []
-    for item in payload.get("quotes", []):
-        quote_type = str(item.get("quoteType") or "").upper()
-        symbol = item.get("symbol")
-        if not symbol or quote_type not in {"EQUITY", "ETF"}:
-            continue
-        output.append({
-            "ticker": symbol,
-            "name": item.get("longname") or item.get("shortname") or symbol,
-            "type": "ETF" if quote_type == "ETF" else "Stock",
-            "exchange": item.get("exchDisp") or item.get("exchange") or "",
-        })
-    return output[:10]
-
-
 def search_assets(query: str) -> List[Dict]:
     query = str(query or "").strip()
 
@@ -96,8 +51,6 @@ def search_assets(query: str) -> List[Dict]:
         return [_with_logo(item) for item in DEFAULT_SUGGESTIONS]
 
     results = search_yahoo(query)
-    if not results:
-        results = _direct_yahoo_search(query)
     if not results:
         symbol = query.upper()
         results = [{"ticker": symbol, "name": symbol, "type": "Stock", "exchange": ""}]

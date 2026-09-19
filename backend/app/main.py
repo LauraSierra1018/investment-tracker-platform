@@ -1,4 +1,10 @@
+from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from sqlalchemy.exc import OperationalError
+from .services.market_snapshot import mark_database_unavailable
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -7,6 +13,7 @@ from .db import Base, engine, get_db
 from .models import WatchlistItem, PortfolioPosition
 from .schemas import *
 from .services.market import get_stock, history
+from .services.market_provider import get_quotes
 from .services.market_overview import market_overview
 from .services.ai import analyze
 from .services.search import search_assets
@@ -18,8 +25,27 @@ from .routers.research import router as research_router
 from .routers.portfolio_v2 import router as portfolio_v2_router
 from .routers.portfolio_import import router as portfolio_import_router
 
-Base.metadata.create_all(engine)
-app=FastAPI(title="Investment Research API",version="2.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        await run_in_threadpool(Base.metadata.create_all, engine)
+    except OperationalError:
+        mark_database_unavailable()
+        logging.getLogger(__name__).warning(
+            "Base de datos no disponible al iniciar; el mercado público sigue disponible."
+        )
+    yield
+
+
+app=FastAPI(title="Investment Research API",version="2.0.0", lifespan=lifespan)
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable(request, exc):
+    mark_database_unavailable()
+    return JSONResponse(status_code=503, content={
+        "detail": "No hay conexión con la base de datos. Intenta nuevamente cuando se restablezca la conexión con Supabase."
+    })
 app.add_middleware(CORSMiddleware,allow_origins=[settings.frontend_origin,"http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 app.include_router(research_router)
 app.include_router(portfolio_v2_router)
@@ -179,16 +205,15 @@ def portfolio(
         db.scalars(statement)
     )
 
+    # The positions list needs prices only, not per-symbol fundamentals.
+    try:
+        quotes = get_quotes([position.ticker for position in positions])
+    except Exception:
+        quotes = {}
     output = []
 
     for position in positions:
-        try:
-            price = get_stock(
-                position.ticker
-            )["price"]
-
-        except Exception:
-            price = None
+        price = (quotes.get(position.ticker.strip().upper()) or {}).get("price")
 
         market_value = (
             price * position.quantity
