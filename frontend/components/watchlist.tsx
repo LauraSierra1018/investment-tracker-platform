@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 
 import { api } from '@/lib/api';
+import Link from 'next/link';
 import { RequireAuth } from '@/components/require-auth';
 
 type WatchlistSavedItem = {
@@ -290,9 +291,9 @@ function WatchlistContent() {
           </div>
 
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-            Tus activos están ordenados automáticamente de mayor a menor score.
-            Un error temporal del proveedor no elimina los tickers guardados.
+            Las empresas y ETFs que sigues, ordenados por su puntaje financiero.
           </p>
+          <Link href="/?tab=criteria#score" className="quiet-link mt-2">Cómo interpretar el puntaje</Link>
         </div>
 
         <button

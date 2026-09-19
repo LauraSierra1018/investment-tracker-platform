@@ -272,6 +272,9 @@ def _yahoo_fundamentals(symbol: str) -> dict[str, Any] | None:
 
     return {
         "company": info.get("longName") or info.get("shortName") or symbol,
+        "price": safe_num(info.get("currentPrice") or info.get("regularMarketPrice")),
+        "dividend_yield_pct": pct(info.get("trailingAnnualDividendYield")),
+
         "description": info.get("longBusinessSummary"),
         "exchange": info.get("exchange"),
         "currency": info.get("currency") or "USD",

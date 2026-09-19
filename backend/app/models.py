@@ -118,3 +118,10 @@ class BrokerPosition(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "account_id", "ticker", name="broker_position_user_account_ticker_unique"),
     )
+
+
+class PortfolioPreference(Base):
+    __tablename__ = "portfolio_preferences"
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

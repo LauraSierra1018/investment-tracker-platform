@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Brain,
   FlaskConical,
@@ -31,6 +31,8 @@ import {
 } from 'recharts';
 
 import { api } from '@/lib/api';
+import Link from 'next/link';
+import { goalLabels, riskLabels, type PortfolioPreferences, type ResearchCoverage } from '@/lib/portfolio-preferences';
 import { createClient } from '@/lib/supabase/client';
 import { StockSearch } from '@/components/stock-search';
 import { ResearchCompare } from '@/components/research-compare';
@@ -99,7 +101,9 @@ type ResearchOpportunity = {
 };
 
 type OpportunitiesResponse = {
-  profile: 'moderate';
+  profile: PortfolioPreferences['risk_profile'];
+  preferences: PortfolioPreferences;
+  coverage: ResearchCoverage;
   portfolio_summary?: {
     positions?: number;
     sectors?: number;
@@ -153,6 +157,12 @@ export function Research() {
   const [aiError, setAiError] = useState('');
 
 
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [preferences, setPreferences] = useState<PortfolioPreferences | null>(null);
+  const [coverage, setCoverage] = useState<ResearchCoverage | null>(null);
+  const [opportunitiesError, setOpportunitiesError] = useState('');
+  const opportunityRequest = useRef(0);
+  const discoveryPolls = useRef(0);
   const [opportunities, setOpportunities] = useState<ResearchOpportunity[]>([]);
   const [opportunitiesLoading, setOpportunitiesLoading] = useState(false);
   const [opportunitiesAvailable, setOpportunitiesAvailable] = useState(false);
@@ -163,7 +173,9 @@ export function Research() {
 
 
   async function loadPortfolioOpportunities() {
+    const requestId = ++opportunityRequest.current;
     setOpportunitiesLoading(true);
+    setOpportunitiesError('');
 
     try {
       const supabase = createClient();
@@ -171,6 +183,8 @@ export function Research() {
         data: { user },
       } = await supabase.auth.getUser();
 
+      if (requestId !== opportunityRequest.current) return;
+      setHasSession(!!user);
       if (!user) {
         setOpportunitiesAvailable(false);
         setOpportunities([]);
@@ -178,25 +192,38 @@ export function Research() {
       }
 
       const result = await api<OpportunitiesResponse>(
-        '/portfolio/opportunities?profile=moderate'
+        '/portfolio/opportunities'
       );
 
+      if (requestId !== opportunityRequest.current) return;
+      setPreferences(result.preferences); setCoverage(result.coverage);
       setOpportunities(result.opportunities || []);
       setPortfolioSource(result.portfolio_summary?.source ?? null);
       setOpportunitiesAvailable(true);
-    } catch {
-      // Research sigue siendo público aunque las oportunidades personalizadas
-      // requieran una sesión autenticada.
-      setOpportunitiesAvailable(false);
-      setOpportunities([]);
+    } catch (error: any) {
+      if (requestId === opportunityRequest.current) {
+        setOpportunitiesError(error?.message || 'No fue posible actualizar las oportunidades.');
+      }
     } finally {
-      setOpportunitiesLoading(false);
+      if (requestId === opportunityRequest.current) setOpportunitiesLoading(false);
     }
   }
 
   useEffect(() => {
     loadPortfolioOpportunities();
+    const ticker = new URLSearchParams(window.location.search).get('ticker');
+    if (ticker) runTicker(ticker);
+    return () => { opportunityRequest.current += 1; };
   }, []);
+
+  useEffect(() => {
+    if (!coverage?.refreshing || discoveryPolls.current >= 4) return;
+    const timer = setTimeout(() => {
+      discoveryPolls.current += 1;
+      loadPortfolioOpportunities();
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [coverage]);
 
   function testInPortfolioLab(ticker: string) {
     localStorage.setItem('portfolio-lab-pending-ticker', ticker.toUpperCase());
@@ -210,7 +237,7 @@ export function Research() {
 
     try {
       const result = await api<ImpactResponse>(
-        `/portfolio/impact/${encodeURIComponent(ticker)}?profile=moderate`
+        `/portfolio/impact/${encodeURIComponent(ticker)}`
       );
       setImpact(result);
     } catch {
@@ -391,10 +418,19 @@ export function Research() {
             </div>
             <div>
               <h2 className="text-xl font-black">Oportunidades para tu portafolio</h2>
+              <Link href="/?tab=criteria#recommendations" className="quiet-link mt-1">Cómo se eligen para ti</Link>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-                Activos de Research Universe priorizados por calidad, diversificación,
-                ajuste de riesgo, valoración y concentración de tu portafolio actual.
+                Descubre activos según tu cartera y los objetivos guardados en Portafolio.
+                La búsqueda incluye candidatos fuera de tu watchlist.
               </p>
+              {preferences && (
+                <p className="mt-2 text-sm font-bold text-violet-700">
+                  {goalLabels[preferences.goal]} · Riesgo {riskLabels[preferences.risk_profile]} · Horizonte {preferences.horizon} años.
+                  <Link href="/portfolio" className="ml-2 underline">Editar objetivos</Link>
+                </p>
+              )}
+              {coverage && <p className="mt-2 text-xs text-slate-500">{coverage.evaluated} activos con datos para evaluar.
+                {coverage.refreshing ? ' Estamos ampliando los candidatos disponibles.' : ''} La cobertura de mercado es parcial.</p>}
               {portfolioSource && (
                 <p className="mt-2 text-xs font-bold text-slate-400">
                   Contexto: {portfolioSource === 'snaptrade' ? 'portafolio conectado por broker' : 'portafolio manual'}
@@ -415,22 +451,25 @@ export function Research() {
           )}
         </div>
 
-        {opportunitiesLoading ? (
+        {opportunitiesError && <p role="alert" className="mt-4 text-sm text-amber-700">{opportunitiesError} <button className="underline" onClick={loadPortfolioOpportunities}>Reintentar</button></p>}
+        {opportunitiesLoading && opportunities.length === 0 ? (
           <div className="mt-6 flex items-center gap-2 text-sm text-slate-500">
             <Loader2 size={16} className="animate-spin" />
             Analizando tu portafolio...
           </div>
+        ) : !opportunitiesAvailable && hasSession !== false ? (
+          <p className="mt-6 text-sm text-slate-500">No se pudieron cargar las recomendaciones. Reintenta cuando se restablezca la conexión.</p>
         ) : !opportunitiesAvailable ? (
           <div className="mt-6 rounded-2xl border border-dashed p-6">
             <p className="font-black">Inicia sesión para personalizar Research</p>
             <p className="mt-1 text-sm leading-6 text-slate-500">
               La investigación individual sigue siendo pública. Al iniciar sesión podemos
-              priorizar activos según tu portafolio real o simulado.
+              priorizar activos según tu portafolio real y tus objetivos guardados.
             </p>
           </div>
         ) : opportunities.length === 0 ? (
           <div className="mt-6 rounded-2xl border border-dashed p-6 text-sm text-slate-500">
-            Investiga más activos para ampliar Research Universe y generar candidatos.
+            Estamos buscando candidatos con datos suficientes para tus objetivos. Puedes actualizar en unos segundos; no necesitas añadirlos a tu watchlist.
           </div>
         ) : (
           <div className="mt-6 grid gap-4 xl:grid-cols-3">
@@ -444,7 +483,7 @@ export function Research() {
                     </p>
                   </div>
                   <span className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700">
-                    {item.match}%
+                    Ajuste {item.match}/100
                   </span>
                 </div>
 
@@ -484,7 +523,7 @@ export function Research() {
                     onClick={() => testInPortfolioLab(item.ticker)}
                     className="rounded-xl border px-3 py-2.5 text-sm font-black"
                   >
-                    Probar en Lab
+                    Simular inversión
                   </button>
                 </div>
               </article>
@@ -503,7 +542,7 @@ export function Research() {
               <div className="mt-2 flex items-center gap-3">
                 <h3 className="text-xl font-black">{impact.ticker}</h3>
                 <span className="rounded-lg bg-white px-3 py-1 font-black text-indigo-700">
-                  Match {impact.match}%
+                  Ajuste {impact.match}/100
                 </span>
               </div>
               <ul className="mt-3 space-y-1 text-sm text-slate-700">
@@ -520,7 +559,7 @@ export function Research() {
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white"
             >
               <FlaskConical size={16} />
-              Probar en Portfolio Lab
+              Simular inversión
             </button>
           </div>
         </section>
@@ -732,7 +771,7 @@ function AssetHeader({
               className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-black text-white"
             >
               <FlaskConical size={16} />
-              Portfolio Lab
+              Simulador
             </button>
           </div>
         </div>

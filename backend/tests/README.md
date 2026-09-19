@@ -63,3 +63,39 @@ last-known-price valuation policy for different exchange calendars.
 
 These limits reduce bursts; they cannot guarantee Yahoo availability. Multiple
 backend processes need a distributed limiter before scaling horizontally.
+
+
+## Portfolio objectives and Research discovery
+
+Run test_recommendations.py with the same unittest discovery command. Tests use
+isolated in-memory SQLite, mocked provider data, and two different authenticated
+users. They verify goals, horizons, priorities, concentration, zero/missing
+metrics, persistence, API validation, and recommendations with an empty watchlist.
+
+PortfolioPreference is a new table created at backend startup. On PostgreSQL,
+startup enables row-level security and revokes direct anon/authenticated table
+access; reads and writes go through /portfolio/preferences with the authenticated
+user ID. The existing backend database owner performs those operations. SQLite
+tests rely on the API ownership filter. No position/watchlist is changed.
+
+Research uses saved preferences by default; the optional profile query parameter
+remains available as a temporary compatibility override. The assistant uses the
+explicit objective fields submitted for that analysis. Custom ranking follows
+selected priorities; free-text assistant instructions do not become ranking rules.
+
+Discovery uses yfinance 0.2.65 screen through the paced Yahoo session: one
+paginated broad equity query (100 records), growth/value screens (50 each), and
+an income screen (50). It shares a six-hour catalogue cache across users and
+retains individually timestamped discoveries at most 24 hours. A rotating group
+of four symbols is queued for fundamentals without blocking responses. ETF seeds
+are research identifiers for categories this yfinance EquityQuery cannot discover;
+they carry no assumed prices or recommendations. All registered Research assets
+remain candidates for refresh, with no watchlist or top-80 prefilter.
+
+Coverage is partial and visible in the UI, not an assertion that every worldwide
+listing was evaluated. Only stocks/ETFs with a positive observed price and some
+fit evidence are shown. Held tickers are excluded. Missing metrics lower match
+and add cautions; match is a relative 0-100 heuristic, not a return probability.
+Sector diversification for ETFs is unknown unless supported by available data;
+underlying holdings overlap, fees, taxes, currency exposure and broker availability
+are not modeled. Short horizons explicitly warn about potential capital loss.

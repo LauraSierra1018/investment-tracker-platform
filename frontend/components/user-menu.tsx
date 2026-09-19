@@ -98,8 +98,8 @@ export function UserMenu() {
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="hidden text-right sm:block">
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="hidden min-w-0 flex-1 text-left sm:block">
         <p className="text-xs text-slate-400">
           Sesión iniciada
         </p>
@@ -109,7 +109,7 @@ export function UserMenu() {
         </p>
       </div>
 
-      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-100">
         <User
           size={17}
           className="text-indigo-600"

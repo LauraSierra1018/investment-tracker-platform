@@ -16,6 +16,7 @@ from ..services.portfolio_v2 import build_analysis, research_impact
 from ..services.portfolio_history import build_history
 from ..services.market import get_stock
 from ..services.research_universe import upsert_research_asset
+from ..services.portfolio_preferences import Preferences, get_preferences, save_preferences
 from ..services.snaptrade_service import (
     broker_positions,
     broker_status,
@@ -39,25 +40,18 @@ class PositionUpdate(BaseModel):
     average_cost: float = Field(ge=0)
 
 
-class AssistantRequest(BaseModel):
-    goal: Literal[
-        "preserve",
-        "balanced",
-        "growth",
-        "aggressive",
-        "income",
-        "custom",
-    ] = "balanced"
+class AssistantRequest(Preferences):
+    prompt: str = Field(default="", max_length=4000)
 
-    risk_profile: Literal[
-        "conservative",
-        "moderate",
-        "aggressive",
-    ] = "moderate"
 
-    horizon: str = "5+"
-    priorities: list[str] = []
-    prompt: str = ""
+@router.get("/preferences")
+def preferences(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return get_preferences(db, user.id).model_dump()
+
+
+@router.put("/preferences")
+def update_preferences(body: Preferences, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return save_preferences(db, user.id, body).model_dump()
 
 
 @router.post("/universe/{ticker}")
@@ -90,7 +84,7 @@ def opportunities(
         "conservative",
         "moderate",
         "aggressive",
-    ] = "moderate",
+    ] | None = None,
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -101,7 +95,9 @@ def opportunities(
     data = build_analysis(db, user.id, profile)
 
     return {
-        "profile": profile,
+        "profile": data["preferences"]["risk_profile"],
+        "preferences": data["preferences"],
+        "coverage": data["recommendation_coverage"],
         "portfolio_summary": data["summary"],
         "portfolio_health": data["health"],
         "opportunities": data["recommendations"],
@@ -115,7 +111,7 @@ def impact(
         "conservative",
         "moderate",
         "aggressive",
-    ] = "moderate",
+    ] | None = None,
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -192,7 +188,7 @@ def analysis(
         "conservative",
         "moderate",
         "aggressive",
-    ] = "moderate",
+    ] | None = None,
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -261,6 +257,7 @@ def assistant(
         db,
         user.id,
         body.risk_profile,
+        preferences=Preferences.model_validate(body.model_dump()),
     )
 
     context = {

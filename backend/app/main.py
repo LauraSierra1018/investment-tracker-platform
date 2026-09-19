@@ -14,6 +14,7 @@ from .models import WatchlistItem, PortfolioPosition
 from .schemas import *
 from .services.market import get_stock, history
 from .services.market_provider import get_quotes
+from .services.portfolio_preferences import protect_preferences_table
 from .services.market_overview import market_overview
 from .services.ai import analyze
 from .services.search import search_assets
@@ -29,6 +30,7 @@ from .routers.portfolio_import import router as portfolio_import_router
 async def lifespan(app):
     try:
         await run_in_threadpool(Base.metadata.create_all, engine)
+        await run_in_threadpool(protect_preferences_table, engine)
     except OperationalError:
         mark_database_unavailable()
         logging.getLogger(__name__).warning(

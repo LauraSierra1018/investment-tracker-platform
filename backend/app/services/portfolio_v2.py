@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 
 from ..models import BrokerPosition, PortfolioPosition, ResearchAsset
 from .market import get_stock
+from .portfolio_preferences import Preferences, resolve_preferences
+from .recommendation_fit import fit
+from .research_discovery import research_candidates
 from .research_universe import (
     list_research_candidates,
     upsert_research_asset,
@@ -735,181 +738,44 @@ def concentration_penalty(
     return min(penalty, 100.0)
 
 
-def candidate_score(
-    stock: dict[str, Any],
-    profile: str,
-    tickers_in_portfolio: set[str],
-    current_sector_weights: dict[str, float],
-):
-    ticker = str(stock.get("ticker") or "").upper()
-    sector = stock.get("sector")
-    investment_quality = safe_float(stock.get("score")) or 50.0
-    beta = safe_float(stock.get("beta"))
-    pe = safe_float(stock.get("pe_ratio"))
-    upside = safe_float(
-        stock.get("upside_percent")
-        if stock.get("upside_percent") is not None
-        else stock.get("upside_pct")
-    )
-    revenue_growth = normalized_percent(
-        stock.get("revenue_growth_pct")
-        if stock.get("revenue_growth_pct") is not None
-        else stock.get("revenue_growth")
-    )
-    earnings_growth = normalized_percent(
-        stock.get("earnings_growth_pct")
-        if stock.get("earnings_growth_pct") is not None
-        else stock.get("earnings_growth")
-    )
-
-    growth_values = [
-        x for x in (revenue_growth, earnings_growth)
-        if x is not None
-    ]
-    growth = (
-        sum(growth_values) / len(growth_values)
-        if growth_values
-        else None
-    )
-
-    diversification = diversification_benefit(
-        sector,
-        current_sector_weights,
-    )
-    risk_fit = profile_fit(beta, profile)
-    valuation = valuation_score(pe, upside)
-    penalty = concentration_penalty(
-        ticker,
-        sector,
-        tickers_in_portfolio,
-        current_sector_weights,
-    )
-
-    match = (
-        investment_quality * 0.45
-        + diversification * 0.20
-        + risk_fit * 0.20
-        + valuation * 0.15
-        - penalty * 0.25
-    )
-
-    reasons: list[str] = []
-    cautions: list[str] = []
-
-    if investment_quality >= 80:
-        reasons.append("Score de inversión alto.")
-    elif investment_quality >= 65:
-        reasons.append("Score de inversión competitivo.")
-
-    if diversification >= 80:
-        reasons.append("Mejora la diversificación sectorial.")
-
-    if risk_fit >= 80:
-        reasons.append(f"Encaja bien con el perfil {profile}.")
-
-    if upside is not None and upside >= 15:
-        reasons.append("Potencial frente al precio objetivo superior al 15%.")
-
-    if growth is not None and growth >= 10:
-        reasons.append("Crecimiento financiero atractivo.")
-
-    if beta is not None and beta > 1.6:
-        cautions.append("Beta elevada; puede aumentar la volatilidad.")
-
-    if pe is not None and pe > 40:
-        cautions.append("Valoración P/E elevada.")
-
-    if sector and current_sector_weights.get(sector, 0) >= 35:
-        cautions.append("Aumentaría una exposición sectorial ya relevante.")
-
-    if not reasons:
-        reasons.append("Presenta una combinación equilibrada de métricas disponibles.")
-
-    components = {
-        "investment_quality": round(investment_quality, 1),
-        "diversification_benefit": round(diversification, 1),
-        "risk_fit": round(risk_fit, 1),
-        "valuation": round(valuation, 1),
-        "concentration_penalty": round(penalty, 1),
-    }
-
-    return (
-        int(max(0, min(100, round(match)))),
-        reasons,
-        cautions,
-        components,
-    )
+def candidate_score(stock, profile, tickers_in_portfolio, current_sector_weights, preferences=None):
+    preferences = preferences or Preferences(risk_profile=profile)
+    return fit(stock, preferences, current_sector_weights, tickers_in_portfolio)
 
 
-def recommendations(db: Session, profile: str, enriched):
-    tickers_in_portfolio = {
-        str(x["ticker"]).upper()
-        for x in enriched
-    }
-
-    current_sector_weights: dict[str, float] = defaultdict(float)
-    total_value = sum(x["market_value"] for x in enriched)
-
-    if total_value > 0:
-        for x in enriched:
-            current_sector_weights[x["sector"]] += (
-                x["market_value"] / total_value * 100
-            )
-
-    universe = list_research_candidates(
-        db,
-        exclude_tickers=tickers_in_portfolio,
-        limit=80,
-    )
-
+def recommendations(db, profile, enriched, preferences=None, with_coverage=False):
+    preferences = preferences or Preferences(risk_profile=profile)
+    held = {str(x["ticker"]).upper() for x in enriched}
+    weights = defaultdict(float)
+    total = sum(x["market_value"] for x in enriched)
+    if total > 0:
+        for row in enriched:
+            weights[row["sector"]] += row["market_value"]/total*100
+    registered = list_research_candidates(db)
+    universe, coverage = research_candidates(db, registered)
     output = []
-
-    for asset in universe:
-        stock = {
-            "ticker": asset.ticker,
-            "company": asset.company or asset.ticker,
-            "sector": asset.sector,
-            "score": asset.score,
-            "beta": asset.beta,
-            "pe_ratio": asset.pe_ratio,
-            "upside_percent": asset.upside_percent,
-            "revenue_growth_pct": asset.revenue_growth_percent,
-            "earnings_growth_pct": asset.earnings_growth_percent,
-        }
-
-        match, reasons, cautions, components = candidate_score(
-            stock,
-            profile,
-            tickers_in_portfolio,
-            current_sector_weights,
-        )
-
-        output.append(
-            {
-                "ticker": asset.ticker,
-                "company": asset.company or asset.ticker,
-                "match": match,
-                "score": asset.score,
-                "beta": asset.beta,
-                "sector": asset.sector,
-                "reasons": reasons,
-                "cautions": cautions,
-                "components": components,
-                "source": "research_universe",
-            }
-        )
-
-    output.sort(
-        key=lambda x: (
-            x["match"],
-            x["score"] if x["score"] is not None else -1,
-        ),
-        reverse=True,
-    )
-
-    return output[:10]
-
-
+    for stock in universe:
+        ticker = str(stock.get("ticker") or "").upper()
+        if ticker in held:
+            continue
+        if str(stock.get("asset_type") or "").upper() not in {"EQUITY", "STOCK", "ETF"}:
+            continue
+        price = safe_float(stock.get("price"))
+        if price is None or price <= 0:
+            continue
+        # Avoid recommending a symbol with only a name/price and no fit evidence.
+        if not any(safe_float(stock.get(k)) is not None for k in
+                   ("score", "beta", "pe_ratio", "revenue_growth_pct", "dividend_yield_pct")):
+            continue
+        match, reasons, cautions, components = candidate_score(stock, profile, held, weights, preferences)
+        output.append({"ticker": ticker, "company": stock.get("company") or ticker,
+                       "match": match, "score": stock.get("score"), "beta": stock.get("beta"),
+                       "sector": stock.get("sector"), "asset_type": stock.get("asset_type"),
+                       "reasons": reasons, "cautions": cautions, "components": components,
+                       "source": stock.get("source"), "fetched_at": stock.get("fetched_at")})
+    output.sort(key=lambda row: (-row["match"], -(row["score"] if row["score"] is not None else -1), row["ticker"]))
+    coverage["eligible"] = len(output)
+    return (output[:10], coverage) if with_coverage else output[:10]
 
 
 @market_budget
@@ -917,12 +783,14 @@ def research_impact(
     db: Session,
     user_id: str,
     ticker: str,
-    profile: str,
+    profile: str | None = None,
 ):
     """
     Evalúa un activo concreto frente al portafolio actual sin agregarlo.
     Se usa desde Research > Ver impacto.
     """
+    preferences = resolve_preferences(db, user_id, profile)
+    profile = preferences.risk_profile
     positions = user_positions(db, user_id)
     enriched_lots = enrich_positions(db, positions)
     enriched = aggregate_positions(enriched_lots)
@@ -954,6 +822,7 @@ def research_impact(
         profile,
         tickers_in_portfolio,
         current_sector_weights,
+        preferences,
     )
 
     return {
@@ -972,7 +841,9 @@ def research_impact(
     }
 
 @market_budget
-def build_analysis(db, user_id, profile):
+def build_analysis(db, user_id, profile=None, preferences=None):
+    preferences = preferences or resolve_preferences(db, user_id, profile)
+    profile = preferences.risk_profile
     positions = user_positions(db, user_id)
     portfolio_source = (
         "snaptrade"
@@ -993,6 +864,7 @@ def build_analysis(db, user_id, profile):
 
     assets, sectors = allocations(enriched)
     health_data, alerts = health(enriched, assets, sectors)
+    candidates, coverage = recommendations(db, profile, enriched, preferences, with_coverage=True)
 
     return {
         "summary": {
@@ -1011,11 +883,9 @@ def build_analysis(db, user_id, profile):
         "allocation_by_asset": assets,
         "allocation_by_sector": sectors,
         "alerts": alerts,
-        "recommendations": recommendations(
-            db,
-            profile,
-            enriched,
-        ),
+        "recommendations": candidates,
+        "recommendation_coverage": coverage,
+        "preferences": preferences.model_dump(),
 
         # Útil para una futura tabla de posiciones consolidada en frontend.
         "consolidated_positions": [

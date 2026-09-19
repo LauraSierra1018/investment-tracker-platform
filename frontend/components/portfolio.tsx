@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -37,6 +37,8 @@ import {
 } from 'recharts';
 
 import { api } from '@/lib/api';
+import Link from 'next/link';
+import type { PortfolioPreferences, ResearchCoverage } from '@/lib/portfolio-preferences';
 import { StockSearch } from '@/components/stock-search';
 import { RequireAuth } from '@/components/require-auth';
 import { BrokerImportPanel } from '@/components/broker-import';
@@ -85,6 +87,8 @@ type BrokerSyncResponse = {
 };
 
 type Analysis = {
+  preferences: PortfolioPreferences;
+  recommendation_coverage?: ResearchCoverage;
   summary: {
     market_value: number;
     invested: number;
@@ -198,17 +202,17 @@ function PortfolioContent() {
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-400">Inversiones</p>
-          <h1 className="mt-1 text-3xl font-black">Portfolio</h1>
+          <h1 className="mt-1 text-3xl font-black">Portafolio</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
             Separa tus inversiones reales de los escenarios que quieras probar antes de tomar una decisión.
           </p>
         </div>
         <div className="flex rounded-2xl border bg-white p-1 shadow-sm">
           <button onClick={() => setMode('real')} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${mode === 'real' ? 'bg-slate-950 text-white' : 'text-slate-500'}`}>
-            <Wallet size={16} /> Real Portfolio
+            <Wallet size={16} /> Portafolio
           </button>
           <button onClick={() => setMode('lab')} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${mode === 'lab' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
-            <FlaskConical size={16} /> Portfolio Lab
+            <FlaskConical size={16} /> Simulador
           </button>
         </div>
       </div>
@@ -233,6 +237,10 @@ function RealPortfolio() {
   const [editQuantity, setEditQuantity] = useState('');
   const [editAverageCost, setEditAverageCost] = useState('');
 
+  const analysisRequest = useRef(0);
+  const [savedPreferences, setSavedPreferences] = useState<PortfolioPreferences | null>(null);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesError, setPreferencesError] = useState('');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('moderate');
   const [goal, setGoal] = useState<Goal>('balanced');
   const [horizon, setHorizon] = useState('5+');
@@ -329,11 +337,12 @@ function RealPortfolio() {
     setItems(result);
   }
 
-  async function loadAnalysis(profile = riskProfile) {
+  async function loadAnalysis() {
+    const requestId = ++analysisRequest.current;
     const result = await api<Analysis>(
-      `/portfolio/analysis?profile=${encodeURIComponent(profile)}`
+      '/portfolio/analysis'
     );
-    setAnalysis(result);
+    if (requestId === analysisRequest.current) setAnalysis(result);
   }
 
   async function loadHistory(nextRange = range) {
@@ -370,15 +379,35 @@ function RealPortfolio() {
     }
   }
 
-  useEffect(() => {
-    loadAll();
-  }, []);
-
-  useEffect(() => {
-    if (!loading) {
-      loadAnalysis(riskProfile);
+  async function loadPreferences() {
+    try {
+      const result = await api<PortfolioPreferences>('/portfolio/preferences');
+      setSavedPreferences(result);
+      setGoal(result.goal); setRiskProfile(result.risk_profile);
+      setHorizon(result.horizon); setPriorities(result.priorities);
+      setPreferencesError('');
+    } catch (error: any) {
+      setPreferencesError(error?.message || 'No se pudieron cargar tus objetivos.');
     }
-  }, [riskProfile]);
+  }
+
+  async function saveObjectives() {
+    setPreferencesSaving(true); setPreferencesError('');
+    try {
+      const result = await api<PortfolioPreferences>('/portfolio/preferences', {
+        method: 'PUT', body: JSON.stringify({ goal, risk_profile: riskProfile, horizon, priorities }),
+      });
+      setSavedPreferences(result);
+      setSuccess('Objetivos guardados. También se aplicarán en Research.');
+      await loadAnalysis();
+    } catch (error: any) {
+      setPreferencesError(error?.message || 'No se pudieron guardar tus objetivos.');
+    } finally { setPreferencesSaving(false); }
+  }
+  const objectivesChanged = savedPreferences !== null &&
+    JSON.stringify(savedPreferences) !== JSON.stringify({ goal, risk_profile: riskProfile, horizon, priorities });
+
+  useEffect(() => { loadPreferences(); loadAll(); }, []);
 
   async function selectStock(ticker: string) {
     setStockLoading(true);
@@ -541,10 +570,126 @@ function RealPortfolio() {
   const summary = analysis?.summary;
   const pnlPositive = (summary?.pnl ?? 0) >= 0;
 
+  function renderObjectives() {
+    return (
+      <section className="card p-6">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-violet-50 p-3">
+            <Target className="text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black">¿Qué quieres lograr?</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Guarda tus objetivos para personalizar las recomendaciones de Portafolio y Research.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          {[
+            ['preserve', 'Preservar capital'],
+            ['balanced', 'Balance'],
+            ['growth', 'Crecimiento'],
+            ['aggressive', 'Crecimiento agresivo'],
+            ['income', 'Ingresos'],
+            ['custom', 'Personalizado'],
+          ].map(([id, label]) => (
+            <Choice
+              key={id}
+              active={goal === id}
+              onClick={() => setGoal(id as Goal)}
+            >
+              {label}
+            </Choice>
+          ))}
+        </div>
+
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <div>
+            <p className="text-sm font-black">Tolerancia al riesgo</p>
+            <div className="mt-2 flex rounded-xl bg-slate-100 p-1">
+              <RiskChoice
+                active={riskProfile === 'conservative'}
+                onClick={() => setRiskProfile('conservative')}
+              >
+                Baja
+              </RiskChoice>
+              <RiskChoice
+                active={riskProfile === 'moderate'}
+                onClick={() => setRiskProfile('moderate')}
+              >
+                Media
+              </RiskChoice>
+              <RiskChoice
+                active={riskProfile === 'aggressive'}
+                onClick={() => setRiskProfile('aggressive')}
+              >
+                Alta
+              </RiskChoice>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-black">Horizonte</p>
+            <select
+              value={horizon}
+              onChange={(e) => setHorizon(e.target.value)}
+              className="mt-2 h-11 w-full rounded-xl border bg-white px-4"
+            >
+              <option value="<1">Menos de 1 año</option>
+              <option value="1-3">1–3 años</option>
+              <option value="3-5">3–5 años</option>
+              <option value="5+">5+ años</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm font-black">Prioridades</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {[
+              ['growth', 'Crecimiento'],
+              ['quality', 'Calidad financiera'],
+              ['low_volatility', 'Menor volatilidad'],
+              ['valuation', 'Valoración'],
+              ['income', 'Dividendos'],
+              ['etf', 'ETFs'],
+              ['diversification', 'Diversificación'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => togglePriority(id)}
+                className={`rounded-xl border px-3 py-2 text-xs font-black ${
+                  priorities.includes(id)
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 bg-white text-slate-500'
+                }`}
+              >
+                {priorities.includes(id) ? '✓ ' : ''}
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-5">
+          <button onClick={saveObjectives} disabled={preferencesSaving || !savedPreferences}
+            className="rounded-xl bg-violet-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50">
+            {preferencesSaving ? 'Guardando objetivos...' : 'Guardar objetivos y actualizar recomendaciones'}
+          </button>
+          <p className="text-sm text-slate-500">{objectivesChanged ? 'Tienes cambios sin guardar.' : savedPreferences ? 'Tus objetivos se comparten con Research.' : 'Cargando tus objetivos...'}</p>
+          {preferencesError && <p role="alert" className="text-sm text-rose-700">{preferencesError} <button onClick={loadPreferences} className="underline">Reintentar</button></p>}
+        </div>
+      </section>
+    );
+  }
+
   if (loading) {
     return (
-      <div className="flex min-h-[450px] items-center justify-center">
-        <Loader2 className="animate-spin text-slate-400" />
+      <div className="space-y-5">
+        <div role="status" className="flex items-center gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+          <Loader2 className="animate-spin" size={18} /> Cargando tu portafolio. Puedes revisar tus objetivos mientras tanto.
+        </div>
+        {renderObjectives()}
       </div>
     );
   }
@@ -557,7 +702,7 @@ function RealPortfolio() {
             Inversiones
           </p>
           <div className="mt-1 flex items-center gap-3">
-            <h1 className="text-3xl font-black">Mi portafolio</h1>
+            <h2 className="text-xl font-semibold">Mi portafolio</h2>
             <span className="rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-black uppercase text-indigo-600">
               Privado
             </span>
@@ -913,106 +1058,7 @@ function RealPortfolio() {
         )}
       </section>
 
-      <section className="card p-6">
-        <div className="flex items-start gap-3">
-          <div className="rounded-xl bg-violet-50 p-3">
-            <Target className="text-violet-600" />
-          </div>
-          <div>
-            <h2 className="text-xl font-black">¿Qué quieres lograr?</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Personaliza el análisis según tu objetivo.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 flex flex-wrap gap-2">
-          {[
-            ['preserve', 'Preservar capital'],
-            ['balanced', 'Balance'],
-            ['growth', 'Crecimiento'],
-            ['aggressive', 'Crecimiento agresivo'],
-            ['income', 'Ingresos'],
-            ['custom', 'Personalizado'],
-          ].map(([id, label]) => (
-            <Choice
-              key={id}
-              active={goal === id}
-              onClick={() => setGoal(id as Goal)}
-            >
-              {label}
-            </Choice>
-          ))}
-        </div>
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <div>
-            <p className="text-sm font-black">Tolerancia al riesgo</p>
-            <div className="mt-2 flex rounded-xl bg-slate-100 p-1">
-              <RiskChoice
-                active={riskProfile === 'conservative'}
-                onClick={() => setRiskProfile('conservative')}
-              >
-                Baja
-              </RiskChoice>
-              <RiskChoice
-                active={riskProfile === 'moderate'}
-                onClick={() => setRiskProfile('moderate')}
-              >
-                Media
-              </RiskChoice>
-              <RiskChoice
-                active={riskProfile === 'aggressive'}
-                onClick={() => setRiskProfile('aggressive')}
-              >
-                Alta
-              </RiskChoice>
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm font-black">Horizonte</p>
-            <select
-              value={horizon}
-              onChange={(e) => setHorizon(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border bg-white px-4"
-            >
-              <option value="<1">Menos de 1 año</option>
-              <option value="1-3">1–3 años</option>
-              <option value="3-5">3–5 años</option>
-              <option value="5+">5+ años</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <p className="text-sm font-black">Prioridades</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {[
-              ['growth', 'Crecimiento'],
-              ['quality', 'Calidad financiera'],
-              ['low_volatility', 'Menor volatilidad'],
-              ['valuation', 'Valoración'],
-              ['income', 'Dividendos'],
-              ['etf', 'ETFs'],
-              ['diversification', 'Diversificación'],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => togglePriority(id)}
-                className={`rounded-xl border px-3 py-2 text-xs font-black ${
-                  priorities.includes(id)
-                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                    : 'border-slate-200 bg-white text-slate-500'
-                }`}
-              >
-                {priorities.includes(id) ? '✓ ' : ''}
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
+      {renderObjectives()}
 
       <section className="card p-6">
         <div className="flex items-start gap-3">
@@ -1154,14 +1200,22 @@ function RealPortfolio() {
           <div>
             <h2 className="text-xl font-black">Oportunidades para investigar</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Ranking adaptado a tu perfil. En la siguiente fase ampliaremos los candidatos a todo Research.
+              Activos de Research y del mercado según tus objetivos guardados y tu cartera, estén o no en tu watchlist.
             </p>
           </div>
         </div>
 
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+          <span>{analysis?.recommendation_coverage?.evaluated ?? 0} activos con datos para evaluar.
+            {analysis?.recommendation_coverage?.refreshing ? ' Estamos ampliando la información disponible.' : ''}
+          </span>
+          <button className="font-bold text-indigo-700" onClick={() => loadAnalysis().catch((e) => setError(e.message))}>Actualizar recomendaciones</button>
+          <Link href="/research" className="font-bold text-indigo-700">Explorar en Research</Link>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">El ajuste compara los datos disponibles con tus objetivos; no es una probabilidad de ganancia. La cobertura de mercado es parcial.</p>
         {(analysis?.recommendations?.length ?? 0) === 0 ? (
           <div className="mt-6 rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">
-            Todavía no hay candidatos disponibles para este perfil.
+            Todavía no hay candidatos con datos suficientes. Actualiza las recomendaciones en unos segundos; no necesitas agregarlos a la watchlist.
           </div>
         ) : (
           <div className="mt-6 grid gap-4 xl:grid-cols-3">
@@ -1175,7 +1229,7 @@ function RealPortfolio() {
                     </p>
                   </div>
                   <span className="rounded-xl bg-emerald-50 px-3 py-2 font-black text-emerald-700">
-                    {x.match}%
+                    Ajuste {x.match}/100
                   </span>
                 </div>
 
@@ -1211,6 +1265,7 @@ function RealPortfolio() {
                     Revisar: {x.cautions[0]}
                   </p>
                 )}
+                <Link href={'/research?ticker=' + encodeURIComponent(x.ticker)} className="mt-4 inline-block rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Investigar</Link>
               </article>
             ))}
           </div>
@@ -1886,7 +1941,7 @@ function PortfolioLab() {
             <div className="rounded-2xl bg-indigo-50 p-3"><FlaskConical className="text-indigo-600" /></div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-black">Portfolio Lab</h2>
+                <h2 className="text-xl font-black">Simulador</h2>
                 <span className="rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-black uppercase text-indigo-700">Simulado</span>
               </div>
               <p className="mt-2 text-sm text-slate-500">Prueba acciones y ETFs sin mezclarlos con tu portafolio real.</p>

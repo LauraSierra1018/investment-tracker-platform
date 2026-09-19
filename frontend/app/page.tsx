@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { UserMenu } from '@/components/user-menu';
 
 import {
   Sidebar,
@@ -42,53 +44,57 @@ const mobileTabs: {
 const validTabs = new Set<Tab>(mobileTabs.map((item) => item.id));
 
 export default function Page() {
-  const [tab, setTab] =
-    useState<Tab>('dashboard');
+  return <Suspense fallback={<p className="p-8 text-slate-500">Cargando...</p>}><HomePage /></Suspense>;
+}
 
-  useEffect(() => {
-    const requestedTab = new URLSearchParams(window.location.search).get('tab') as Tab | null;
-    if (requestedTab && validTabs.has(requestedTab)) {
-      setTab(requestedTab);
-    }
-  }, []);
+function HomePage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const requestedTab = searchParams.get('tab') as Tab | null;
+  const tab: Tab = requestedTab && validTabs.has(requestedTab) ? requestedTab : 'dashboard';
+  function setTab(next: Tab) {
+    router.push('/?tab=' + next);
+  }
 
   return (
-    <main className="min-h-screen">
+    <main className="app-shell min-h-screen">
       <div className="mx-auto flex max-w-[1600px]">
         <Sidebar
           tab={tab}
           setTab={setTab}
         />
 
-        <section className="min-w-0 flex-1 p-5 md:p-8">
-          <div className="mb-5 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+        <section className="min-w-0 flex-1 px-4 py-6 sm:px-6 md:p-8 xl:px-10">
+          <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-200 pb-4 lg:hidden"><p className="text-sm font-semibold tracking-tight text-slate-800">Investment <span className="text-indigo-600">Research</span></p><UserMenu /></div>
+          <nav aria-label="Navegación principal móvil" className="mb-7 flex gap-1 overflow-x-auto border-b border-slate-200 pb-2 lg:hidden">
             {mobileTabs.map((item) => (
               <button
                 key={item.id}
+                aria-current={tab === item.id ? 'page' : undefined}
                 onClick={() =>
                   setTab(item.id)
                 }
                 className={`
-                  shrink-0 rounded-xl px-4 py-2
-                  text-sm font-bold transition
+                  shrink-0 rounded-lg px-3 py-2.5
+                  text-sm font-medium transition
                   ${
                     tab === item.id
-                      ? 'bg-slate-950 text-white'
-                      : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      ? 'bg-indigo-50 text-indigo-700'
+                      : 'text-slate-600 hover:bg-white'
                   }
                 `}
               >
                 {item.label}
               </button>
             ))}
-          </div>
+          </nav>
 
           {tab === 'dashboard' && (
             <Dashboard />
           )}
 
           {tab === 'research' && (
-            <Research />
+            <Research key={searchParams.get('ticker') || 'research'} />
           )}
 
           {tab === 'watchlist' && (

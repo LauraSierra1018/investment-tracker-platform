@@ -72,7 +72,11 @@ def upsert_research_asset(db: Session, stock: dict[str, Any]) -> ResearchAsset |
     asset.last_price = safe_float(stock.get("price"))
 
     asset.last_seen_at = now
-    asset.updated_at = now
+    stamp = ((stock.get("provenance") or {}).get("fundamentals") or {}).get("fetched_at") or stock.get("updated_at")
+    try:
+        asset.updated_at = datetime.fromisoformat(str(stamp)) if stamp else asset.updated_at or datetime(1970, 1, 1, tzinfo=timezone.utc)
+    except ValueError:
+        asset.updated_at = asset.updated_at or datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     db.commit()
     db.refresh(asset)
@@ -83,7 +87,7 @@ def list_research_candidates(
     db: Session,
     *,
     exclude_tickers: set[str] | None = None,
-    limit: int = 80,
+    limit: int | None = None,
 ) -> list[ResearchAsset]:
     exclude_tickers = {x.upper() for x in (exclude_tickers or set())}
     cutoff = datetime.now(timezone.utc) - RESEARCH_DECISION_MAX_AGE
@@ -93,13 +97,13 @@ def list_research_candidates(
             select(ResearchAsset)
             .where(
                 ResearchAsset.is_active.is_(True),
-                ResearchAsset.last_seen_at >= cutoff,
+
             )
             .order_by(
                 ResearchAsset.score.desc().nullslast(),
                 ResearchAsset.last_seen_at.desc(),
             )
-            .limit(max(limit * 2, limit))
+
         )
     )
 
@@ -111,7 +115,7 @@ def list_research_candidates(
 
         result.append(row)
 
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
 
     return result

@@ -164,6 +164,7 @@ def get_stock(ticker: str) -> dict[str, Any]:
         "volume": safe_num(_first(quote.get("volume"), fundamentals.get("volume"), legacy.get("volume"))),
         "average_volume": safe_num(_first(fundamentals.get("average_volume"), legacy.get("average_volume"))),
         "beta": metrics["beta"],
+        "dividend_yield_pct": fundamentals.get("dividend_yield_pct"),
         "revenue_growth_pct": metrics["revenue_growth_pct"],
         "earnings_growth_pct": metrics["earnings_growth_pct"],
         "roe_pct": metrics["roe_pct"],
