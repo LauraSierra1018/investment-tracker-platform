@@ -16,7 +16,7 @@ import type {
   User,
 } from '@supabase/supabase-js';
 
-import { createClient } from '@/lib/supabase/client';
+import { getCurrentUser } from '@/lib/supabase/client';
 
 export function RequireAuth({
   children,
@@ -32,23 +32,28 @@ export function RequireAuth({
 
   const [loading, setLoading] =
     useState(true);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    const supabase =
-      createClient();
+    let active = true;
+    setLoading(true);
+    setError('');
 
     async function check() {
-      const {
-        data: { user },
-      } =
-        await supabase.auth.getUser();
-
-      setUser(user);
-      setLoading(false);
+      try {
+        const { data: { user } } = await getCurrentUser();
+        if (active) setUser(user);
+      } catch {
+        if (active) setError('No pudimos comprobar tu sesión. Puedes reintentar o seguir navegando.');
+      } finally {
+        if (active) setLoading(false);
+      }
     }
 
     check();
-  }, []);
+    return () => { active = false; };
+  }, [retry]);
 
   if (loading) {
     return (
@@ -56,6 +61,13 @@ export function RequireAuth({
         <Loader2 className="animate-spin text-slate-400" />
       </div>
     );
+  }
+
+  if (error) {
+    return <section role="alert" className="card p-8">
+      <p className="text-slate-600">{error}</p>
+      <button className="button-secondary mt-4" onClick={() => setRetry(value => value + 1)}>Reintentar conexión</button>
+    </section>;
   }
 
   if (!user) {

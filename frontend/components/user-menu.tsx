@@ -17,7 +17,7 @@ import type {
   User as SupabaseUser,
 } from '@supabase/supabase-js';
 
-import { createClient } from '@/lib/supabase/client';
+import { createClient, getCurrentUser } from '@/lib/supabase/client';
 
 export function UserMenu() {
   const router = useRouter();
@@ -31,17 +31,20 @@ export function UserMenu() {
     useState(true);
 
   useEffect(() => {
+    let active = true;
     const supabase =
       createClient();
 
     async function loadUser() {
-      const {
-        data: { user },
-      } =
-        await supabase.auth.getUser();
+      try {
+        const { data: { user } } = await getCurrentUser();
 
-      setUser(user);
-      setLoading(false);
+        if (active) setUser(user);
+      } catch {
+        // Keep the navigation usable while authentication is unavailable.
+      } finally {
+        if (active) setLoading(false);
+      }
     }
 
     loadUser();
@@ -53,6 +56,8 @@ export function UserMenu() {
     } =
       supabase.auth.onAuthStateChange(
         (_event, session) => {
+          if (!active) return;
+          setLoading(false);
           setUser(
             session?.user ?? null
           );
@@ -60,6 +65,7 @@ export function UserMenu() {
       );
 
     return () => {
+      active = false;
       subscription.unsubscribe();
     };
   }, []);

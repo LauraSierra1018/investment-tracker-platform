@@ -131,7 +131,7 @@ def _build_payload() -> dict[str, Any]:
             "unchanged": max(0, len(valid_changes) - advancing - declining),
         },
         "updated_at": max((q.get("retrieved_at") or q.get("fetched_at") or "" for q in quotes.values()), default=None),
-        "refresh_seconds": CACHE_SECONDS,
+        "refresh_seconds": 10 if any(q.get("stale") for q in quotes.values()) or len(quotes) < len(all_symbols) else CACHE_SECONDS,
         "source": " + ".join(sorted({q["source"] for q in quotes.values() if q.get("source")})),
         "stale": any(q.get("stale") for q in quotes.values()),
         "warning": "Algunas cotizaciones son el último dato guardado." if any(q.get("stale") for q in quotes.values()) else None,
@@ -147,6 +147,9 @@ def _build_payload() -> dict[str, Any]:
 def market_overview(force_refresh: bool = False) -> dict[str, Any]:
     if not force_refresh:
         cached = load_snapshot("market_overview", "multi_provider_v1", CACHE_SECONDS)
+        if isinstance(cached, dict) and (cached.get("stale") or cached.get("refresh_seconds") == 10):
+            # Do not hide completed background quotes behind a minute-old partial composite.
+            cached = load_snapshot("market_overview", "multi_provider_v1", 10)
         if isinstance(cached, dict):
             return cached
 

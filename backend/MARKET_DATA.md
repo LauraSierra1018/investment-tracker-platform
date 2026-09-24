@@ -5,6 +5,20 @@ Add MASSIVE_API_KEY and FMP_API_KEY to the existing backend/.env, following
 Restart the backend after configuring keys. Blank keys disable that provider;
 they do not disable other providers. No keys go to the browser.
 
+Production configuration is separate from local .env files. On Render, add
+MASSIVE_API_KEY and FMP_API_KEY in the backend service's Environment settings and
+redeploy that service. Keep ALPHA_VANTAGE_API_KEY and existing database/auth
+variables. Never put provider secrets in Vercel NEXT_PUBLIC_* variables or Git.
+The Vercel frontend's BACKEND_URL must point to the Render backend's public URL.
+
+Public market requests bypass client session lookup and frontend cookie refresh;
+private endpoints still verify the supplied JWT in FastAPI. Browser requests
+have a 20-second total deadline including session/body reads; PDF preview, AI
+analysis and broker sync retain separate longer limits. Writes are not retried.
+Tab buttons update client history without waiting for a server navigation.
+Dashboard polls at the server's refresh interval and preserves existing values
+on an update failure; incomplete composites are rechecked after 10 seconds.
+
 The configured database can be PostgreSQL or SQLite. No new tables or migrations
 are needed: the layer reuses MarketDataSnapshot and its memory/outage fallback.
 

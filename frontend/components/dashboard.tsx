@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowRight, ArrowUpRight, ArrowDownRight, RefreshCw, Star, Wallet, Globe2, Loader2, LockKeyhole } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { api } from '@/lib/api';
-import { createClient } from '@/lib/supabase/client';
+import { createClient, getCurrentUser } from '@/lib/supabase/client';
 
 type MarketStock = { ticker: string; company: string; price: number | null; change_percent: number | null; market_cap: number | null };
 type MarketOverview = {
@@ -13,6 +13,7 @@ type MarketOverview = {
   indices: { ticker: string; name: string; price: number | null; change_percent: number | null }[];
   leaders: MarketStock[]; laggards: MarketStock[]; updated_at: string; source: string;
   stale?: boolean; warning?: string | null;
+  refresh_seconds?: number;
 };
 type WatchRow = { ticker: string; company?: string; price?: number | null; currency?: string; score?: number | null };
 type PortfolioOverview = {
@@ -34,7 +35,7 @@ export function Dashboard() {
   useEffect(() => {
     let active = true;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => { if (active) { setUser(data.user); setAuthLoading(false); } })
+    getCurrentUser().then(({ data }) => { if (active) { setUser(data.user); setAuthLoading(false); } })
       .catch(() => { if (active) setAuthLoading(false); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (active) { setUser(session?.user ?? null); setAuthLoading(false); }
@@ -45,20 +46,29 @@ export function Dashboard() {
   useEffect(() => {
     let active = true;
     let busy = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
     async function load() {
-      if (busy) return;
+      if (busy || !active) return;
       busy = true;
+      let nextRefresh = 30000;
       setLoading(true); setError('');
       try {
-        const result = await api<MarketOverview>('/market/overview');
+        const result = await api<MarketOverview>('/market/overview', { signal: controller.signal });
+        nextRefresh = Math.max(5000, Math.min(60000, (result.refresh_seconds ?? 60) * 1000));
         if (active) setMarket(result);
       } catch {
         if (active) setError('El mercado no se pudo actualizar. Puedes seguir consultando tus inversiones.');
-      } finally { busy = false; if (active) setLoading(false); }
+      } finally {
+        busy = false;
+        if (active) {
+          setLoading(false);
+          timer = setTimeout(load, nextRefresh);
+        }
+      }
     }
     load();
-    const interval = window.setInterval(load, 300000);
-    return () => { active = false; window.clearInterval(interval); };
+    return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [refresh]);
 
   const observedAt = market?.updated_at ? new Date(market.updated_at) : null;

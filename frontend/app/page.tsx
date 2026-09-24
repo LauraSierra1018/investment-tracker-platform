@@ -1,7 +1,8 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import { NAVIGATION_EVENT } from '@/lib/api-request';
 import { UserMenu } from '@/components/user-menu';
 
 import {
@@ -49,11 +50,13 @@ export default function Page() {
 
 function HomePage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const requestedTab = searchParams.get('tab') as Tab | null;
   const tab: Tab = requestedTab && validTabs.has(requestedTab) ? requestedTab : 'dashboard';
   function setTab(next: Tab) {
-    router.push('/?tab=' + next);
+    if (next === tab) return;
+    window.dispatchEvent(new Event(NAVIGATION_EVENT));
+    // Client sections must remain navigable without a server response.
+    window.history.pushState(null, '', '/?tab=' + next);
   }
 
   return (

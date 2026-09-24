@@ -33,7 +33,7 @@ import {
 import { api } from '@/lib/api';
 import Link from 'next/link';
 import { goalLabels, riskLabels, type PortfolioPreferences, type ResearchCoverage } from '@/lib/portfolio-preferences';
-import { createClient } from '@/lib/supabase/client';
+import { createClient, getCurrentUser } from '@/lib/supabase/client';
 import { StockSearch } from '@/components/stock-search';
 import { ResearchCompare } from '@/components/research-compare';
 import type { Stock, DataProvenance } from '@/types';
@@ -194,7 +194,7 @@ export function Research() {
       const supabase = createClient();
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getCurrentUser();
 
       if (requestId !== opportunityRequest.current) return;
       setHasSession(!!user);
@@ -354,7 +354,7 @@ export function Research() {
       const supabase = createClient();
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getCurrentUser();
 
       if (!user) {
         setLoginRequired(true);

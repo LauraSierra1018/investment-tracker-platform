@@ -68,7 +68,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.json()["source"],"Massive")
         self.assertTrue(response.json()["stale"])
+        self.assertEqual(response.json()["refresh_seconds"],10)
         self.assertEqual(response.json()["provenance"]["AAPL"]["quote"]["data_timestamp"],data["data_timestamp"])
+
+    def test_dashboard_rechecks_partial_cache_after_ten_seconds(self):
+        cached = {"stale": True, "refresh_seconds": 10, "stocks": []}
+        fresh = {"stale": False, "refresh_seconds": 60, "stocks": [{"ticker": "AAPL", "price": 100}]}
+        with patch.object(market_overview,"load_snapshot",side_effect=[cached, None]) as read, \
+             patch.object(market_overview,"_build_payload",return_value=fresh) as build, \
+             patch.object(market_overview,"save_snapshot"):
+            self.assertEqual(market_overview.market_overview(),fresh)
+        self.assertEqual(read.call_args_list[-1].args[-1],10)
+        build.assert_called_once()
 
     def test_analysis_never_uses_unverified_research_prices_or_ratios(self):
         self.db.add_all([

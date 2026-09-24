@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { authFetch, withDeadline } from '@/lib/api-request';
 
 export async function updateSession(
   request: NextRequest
@@ -12,6 +13,7 @@ export async function updateSession(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: { fetch: authFetch },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -47,7 +49,12 @@ export async function updateSession(
     Verifica/refresca la autenticación.
   */
 
-  await supabase.auth.getClaims();
+  try {
+    await withDeadline(() => supabase.auth.getClaims(), 8000);
+  } catch {
+    // This proxy refreshes cookies, not authorization. Private data is still
+    // protected by FastAPI; a temporary auth outage must not block the shell.
+  }
 
   return response;
 }

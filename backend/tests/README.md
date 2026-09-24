@@ -1,5 +1,13 @@
 # Verification
 
+Frontend network regressions (from frontend):
+
+    node --test tests/api-request.test.cjs
+
+These use mocked network/session responses, including requests that never
+resolve, cancellation when changing tabs, response-body timeouts and private
+JWT headers. They never send real requests or repeat portfolio mutations.
+
 The current multi-provider architecture and setup are documented in
 [MARKET_DATA.md](../MARKET_DATA.md). test_market_data.py and
 test_market_workflows.py exercise provider policy, validation, circuits,
