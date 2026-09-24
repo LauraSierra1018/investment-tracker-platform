@@ -15,6 +15,7 @@ from app.services.recommendation_fit import fit
 from app.services.portfolio_v2 import recommendations
 from app.services.research_universe import list_research_candidates, upsert_research_asset
 from app.services import research_discovery as discovery
+from app.services.market_data.common import stamp
 
 def stock(ticker, **changes):
     return {"ticker": ticker, "company": ticker, "asset_type": "EQUITY", "price": 100,
@@ -133,6 +134,10 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(len(list_research_candidates(self.db)),1)
 
 class DiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        provider = patch.object(discovery.fmp_provider, "discover", return_value=[])
+        provider.start()
+        self.addCleanup(provider.stop)
     def test_screening_uses_shared_limited_session_and_no_watchlist(self):
         response={"quotes":[{"symbol":"NEW","quoteType":"EQUITY","regularMarketPrice":20,"trailingPE":15}],"total":500}
         with patch.object(discovery,"load_snapshot",return_value=None), \
@@ -155,15 +160,17 @@ class DiscoveryTests(unittest.TestCase):
     def test_partial_fundamentals_preserves_fresh_catalog_price(self):
         now = datetime.now(timezone.utc).isoformat()
         catalog = {"items": [{"ticker": "NEW", "price": 20, "pe_ratio": 15, "fetched_at": now}]}
-        data = {"NEW": {"price": None, "pe_ratio": None, "beta": 1, "fetched_at": now}}
+        data = {"NEW": {**stamp("fmp", "NEW", "2025-12-31", "USD"),
+                        "company": "New", "price": None, "pe_ratio": None, "beta": 1, "fetched_at": now}}
         with patch.object(discovery, "load_snapshot", side_effect=lambda kind, *args: catalog if kind == "research_catalog" else None), \
              patch.object(discovery, "load_snapshots", return_value=data), \
              patch.object(discovery, "save_snapshot"), \
              patch.object(discovery.refreshes, "get"):
             rows, _ = discovery.research_candidates(None, [])
         self.assertEqual(rows[0]["price"], 20)
-        self.assertEqual(rows[0]["pe_ratio"], 15)
+        self.assertIsNone(rows[0]["pe_ratio"])
         self.assertEqual(rows[0]["beta"], 1)
+        self.assertEqual(rows[0]["provenance"]["fundamentals"]["provider"], "fmp")
 
     def test_screen_ignores_invalid_prices_and_unsupported_assets(self):
         for row in [{"symbol":"BAD","regularMarketPrice":float("nan")},

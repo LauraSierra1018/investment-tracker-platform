@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-import json
 from typing import Any
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-
-from ..config import settings
-from .market_requests import remaining_budget
 
 
 def safe_num(value: Any) -> float | None:
@@ -24,25 +18,9 @@ def pct(value: Any) -> float | None:
 
 
 def alpha_request(params: dict[str, str]) -> dict[str, Any] | None:
-    api_key = (settings.alpha_vantage_api_key or "").strip()
-    if not api_key or remaining_budget() <= 0:
-        return None
-
-    query = dict(params)
-    query["apikey"] = api_key
-    url = "https://www.alphavantage.co/query?" + urlencode(query)
-
-    try:
-        request = Request(url, headers={"User-Agent": "InvestmentResearchAI/1.0"})
-        with urlopen(request, timeout=min(8, remaining_budget())) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            return None
-        if payload.get("Note") or payload.get("Information"):
-            return None
-        return payload
-    except Exception:
-        return None
+    # Compatibility for older callers; all Alpha traffic shares the same gate.
+    from .market_data.alpha_vantage_provider import alpha_request as guarded_request
+    return guarded_request(params)
 
 
 def alpha_stock_raw(symbol: str) -> dict[str, Any] | None:

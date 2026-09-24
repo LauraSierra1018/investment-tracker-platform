@@ -75,6 +75,11 @@ def analyze(ticker: str):
         "risks": data.get("risks", []),
         "missing_data": data.get("missing_data", []),
         "criteria": data.get("criteria", []),
+        "provenance": data.get("provenance", {}),
+        "valuation": data.get("valuation", {}),
+        "period_basis": data.get("period_basis"),
+        "stale": data.get("stale"),
+        "warning": data.get("warning"),
     }
 
     # ---------------------------------------------------------

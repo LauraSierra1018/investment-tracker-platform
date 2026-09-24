@@ -215,7 +215,11 @@ def portfolio(
     output = []
 
     for position in positions:
-        price = (quotes.get(position.ticker.strip().upper()) or {}).get("price")
+        quote = quotes.get(position.ticker.strip().upper()) or {}
+        price = quote.get("price")
+        currency_matches = quote.get("currency") == position.currency
+        if not currency_matches:
+            price = None
 
         market_value = (
             price * position.quantity
@@ -266,6 +270,9 @@ def portfolio(
                 ),
 
                 current_price=price,
+                stale=quote.get("stale", False),
+                warning=quote.get("warning") if currency_matches else "No hay una cotización con moneda compatible verificada.",
+                provenance={key: quote.get(key) for key in ("provider", "source", "retrieved_at", "data_timestamp", "currency")},
 
                 market_value=(
                     market_value

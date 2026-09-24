@@ -12,10 +12,11 @@ type MarketOverview = {
   stocks: MarketStock[];
   indices: { ticker: string; name: string; price: number | null; change_percent: number | null }[];
   leaders: MarketStock[]; laggards: MarketStock[]; updated_at: string; source: string;
+  stale?: boolean; warning?: string | null;
 };
 type WatchRow = { ticker: string; company?: string; price?: number | null; currency?: string; score?: number | null };
 type PortfolioOverview = {
-  summary: { market_value: number; invested: number; pnl: number; pnl_percent: number; positions: number };
+  summary: { market_value: number; invested: number; pnl: number; pnl_percent: number; positions: number; estimated?: boolean; stale?: boolean };
   allocation_by_asset: { ticker: string; value: number; percent: number }[];
 };
 
@@ -77,6 +78,7 @@ export function Dashboard() {
         {updatedLabel && <span className="text-xs text-slate-500">{updatedLabel}</span>}
       </div>
       {error && <p role="alert" className="mx-5 mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{error}</p>}
+      {market?.warning && <p role="status" className="mx-5 mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{market.warning}</p>}
       {!market ? <LoadingState text={loading ? 'Consultando los índices…' : 'Los índices estarán disponibles cuando se restablezcan los datos.'} loading={loading} /> :
         market.indices.length ? <div className="grid grid-cols-2 border-t border-slate-100 xl:grid-cols-4">
           {market.indices.map(index => <article key={index.ticker} className="min-w-0 border-b border-r border-slate-100 p-5 last:border-r-0 sm:p-6">
@@ -188,9 +190,10 @@ function PortfolioPreview({ refresh }: { refresh: number }) {
     {loading && !data ? <LoadingState text="Consultando tus inversiones…" /> : !data ? <LoadingState loading={false} text="Tu portafolio estará disponible al restablecerse la conexión." /> : !data.summary.positions ?
       <EmptyState title="Todas tus inversiones, juntas" text="Agrega una inversión o importa el informe de tu broker para empezar." href="/?tab=portfolio" action="Agregar mi portafolio" /> :
       <div className="px-5 pb-5 sm:px-6">
-        <p className="text-xs font-medium text-slate-500">Valor del portafolio</p>
+        <p className="text-xs font-medium text-slate-500">{data.summary.estimated ? 'Valor estimado del portafolio' : 'Valor del portafolio'}</p>
+        {(data.summary.estimated || data.summary.stale) && <p className="mt-1 text-xs text-amber-800">{data.summary.estimated ? 'Incluye costos de compra por falta de cotizaciones. Revisa el detalle del portafolio.' : 'Incluye datos guardados. Revisa las fechas en el portafolio.'}</p>}
         <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">{money(data.summary.market_value)}</p>
-        <div className="mt-3 flex flex-wrap items-center gap-2"><Change value={data.summary.pnl_percent} /><span className="text-xs text-slate-500">respecto a lo invertido</span></div>
+        <div className="mt-3 flex flex-wrap items-center gap-2"><Change value={data.summary.estimated ? null : data.summary.pnl_percent} /><span className="text-xs text-slate-500">respecto a lo invertido</span></div>
         <dl className="mt-6 grid grid-cols-2 gap-4 border-y border-slate-100 py-4"><div><dt className="text-xs text-slate-500">Capital invertido</dt><dd className="mt-1 text-sm font-semibold tabular-nums">{money(data.summary.invested)}</dd></div><div><dt className="text-xs text-slate-500">Ganancia / pérdida</dt><dd className={`mt-1 text-sm font-semibold tabular-nums ${data.summary.pnl >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{data.summary.pnl > 0 ? '+' : ''}{money(data.summary.pnl)}</dd></div></dl>
         <div className="mt-5 flex justify-between text-xs"><span className="font-medium text-slate-600">Distribución por activo</span><span className="text-slate-500">{data.summary.positions} activos</span></div>
         <div className="mt-3 flex h-2 gap-0.5 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">{assets.map((asset, i) => <span key={asset.ticker} className={colors[i]} style={{ width: `${Math.max(0, asset.percent)}%` }} />)}{rest > 0 && <span className="bg-slate-300" style={{ width: `${rest}%` }} />}</div>

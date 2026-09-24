@@ -1,238 +1,107 @@
-from __future__ import annotations
-
 from typing import Any
-from .market_requests import market_budget
-
 from fastapi import HTTPException
-
-from .market_provider import (
-    get_fundamentals,
-    get_history as provider_history,
-    get_quote,
-    search_yahoo,
-)
-from .market_snapshot import load_snapshot
+from .market_requests import market_budget, refreshes
+from .market_provider import get_fundamentals, get_history as provider_history, get_quote, search_yahoo
+from .market_data.common import number as safe_num, provenance
 from .scoring import evaluate
 
-
-LEGACY_FUNDAMENTALS_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
-
-
-def safe_num(value: Any, scale: float = 1.0) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value) / scale
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_symbol(ticker: str) -> str:
-    symbol = str(ticker or "").strip().upper()
-    if not symbol or len(symbol) > 20:
+def _normalize_symbol(ticker):
+    from .market_data.common import symbol
+    result = symbol(ticker)
+    if not result:
         raise HTTPException(status_code=400, detail="Ticker inválido")
-    return symbol
-
-
-def _legacy_stock(symbol: str) -> dict[str, Any]:
-    """Read rich snapshots created by the previous market layer.
-
-    They remain useful for slowly-changing fundamentals while the new provider
-    cache is warming up. Quotes are never taken from this 7-day compatibility
-    snapshot; current prices still come from the quote provider/cache.
-    """
-    cached = load_snapshot("stock", symbol, LEGACY_FUNDAMENTALS_MAX_AGE_SECONDS)
-    return cached if isinstance(cached, dict) else {}
-
-
-def _first(*values: Any) -> Any:
-    for value in values:
-        if value is not None:
-            return value
-    return None
-
+    return result
 
 @market_budget
 def get_stock(ticker: str) -> dict[str, Any]:
-    symbol = _normalize_symbol(ticker)
-
-    fundamentals = get_fundamentals(symbol) or {}
-    quote = get_quote(symbol) or {}
-    legacy = _legacy_stock(symbol)
-
-    if not fundamentals and not quote and not legacy:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "No fue posible obtener información vigente del activo desde "
-                "Yahoo Finance ni desde Alpha Vantage."
-            ),
-        )
-
+    ticker = _normalize_symbol(ticker)
+    # Quotes have priority within the shared wait budget; workers may finish fundamentals later.
+    quote = get_quote(ticker) or {}
+    fundamentals = get_fundamentals(ticker) or {}
+    refreshing = (refreshes.is_pending(("md_fundamentals", ticker))
+                  or refreshes.is_pending(("md_quotes", ticker)))
+    if not quote and not fundamentals and not refreshing:
+        raise HTTPException(status_code=503, detail="Los proveedores de mercado no están disponibles y no hay datos verificados guardados.")
     price = safe_num(quote.get("price"))
-    previous_close = safe_num(quote.get("previous_close"))
-    change_percent = safe_num(quote.get("change_percent"))
-
-    target = safe_num(_first(fundamentals.get("target_price"), legacy.get("target_price")))
-    shares = safe_num(fundamentals.get("shares_outstanding"))
-    float_shares = safe_num(fundamentals.get("float_shares"))
-
-    calculated_free_float = (
-        float_shares / shares * 100
-        if shares not in (None, 0) and float_shares is not None
-        else None
-    )
-    free_float = _first(calculated_free_float, safe_num(legacy.get("free_float_percent")))
-    upside = (
-        (target - price) / price * 100
-        if target is not None and price not in (None, 0)
-        else safe_num(_first(legacy.get("upside_percent"), legacy.get("upside_pct")))
-    )
-
-    market_cap = safe_num(_first(fundamentals.get("market_cap"), legacy.get("market_cap")))
-    revenue = safe_num(_first(fundamentals.get("revenue"), legacy.get("revenue")))
-    legacy_fcf_m = safe_num(legacy.get("free_cash_flow_m"))
-    free_cash_flow = safe_num(fundamentals.get("free_cash_flow"))
-
-    metrics = {
-        "market_cap_b": market_cap / 1e9 if market_cap is not None else None,
-        "pe_ratio": safe_num(_first(fundamentals.get("pe_ratio"), legacy.get("pe_ratio"))),
-        "revenue_m": revenue / 1e6 if revenue is not None else safe_num(legacy.get("revenue_millions")),
-        "free_float_pct": free_float,
-        "upside_pct": upside,
-        "revenue_growth_pct": safe_num(_first(fundamentals.get("revenue_growth_pct"), legacy.get("revenue_growth_pct"))),
-        "earnings_growth_pct": safe_num(_first(fundamentals.get("earnings_growth_pct"), legacy.get("earnings_growth_pct"))),
-        "roe_pct": safe_num(_first(fundamentals.get("roe_pct"), legacy.get("roe_pct"))),
-        "roa_pct": safe_num(_first(fundamentals.get("roa_pct"), legacy.get("roa_pct"))),
-        "operating_margin_pct": safe_num(_first(fundamentals.get("operating_margin_pct"), legacy.get("operating_margin_pct"))),
-        "debt_to_equity": safe_num(_first(fundamentals.get("debt_to_equity"), legacy.get("debt_to_equity"))),
-        "current_ratio": safe_num(_first(fundamentals.get("current_ratio"), legacy.get("current_ratio"))),
-        "free_cash_flow_m": free_cash_flow / 1e6 if free_cash_flow is not None else legacy_fcf_m,
-        "beta": safe_num(_first(fundamentals.get("beta"), legacy.get("beta"))),
-    }
-
+    quote_currency, fundamental_currency = quote.get("currency"), fundamentals.get("currency")
+    currency = quote_currency or fundamental_currency or ""
+    currencies_match = bool(quote_currency and quote_currency == fundamental_currency)
+    financial_currency = fundamentals.get("financial_currency") or fundamental_currency
+    financial_match = bool(quote_currency and quote_currency == financial_currency)
+    target = safe_num(fundamentals.get("target_price")) if currencies_match else None
+    eps = safe_num(fundamentals.get("eps"))
+    pe = price/eps if financial_match and price is not None and eps is not None and eps > 0 else None
+    # Do not expose a provider's older P/E as a valuation at today's price.
+    upside = (target/price-1)*100 if target is not None and price and currencies_match else None
+    shares, floating = safe_num(fundamentals.get("shares_outstanding")), safe_num(fundamentals.get("float_shares"))
+    free_float = floating/shares*100 if floating is not None and shares and shares > 0 else None
+    cap = safe_num(quote.get("market_cap"))
+    if cap is None and currencies_match:
+        cap = safe_num(fundamentals.get("market_cap"))
+    revenue, cash = safe_num(fundamentals.get("revenue")), safe_num(fundamentals.get("free_cash_flow"))
+    metrics = {k: safe_num(fundamentals.get(k)) for k in
+               ("revenue_growth_pct", "earnings_growth_pct", "roe_pct", "roa_pct",
+                "operating_margin_pct", "debt_to_equity", "current_ratio", "beta")}
+    metrics.update(market_cap_b=cap/1e9 if cap is not None else None,
+                   revenue_m=revenue/1e6 if revenue is not None else None, pe_ratio=pe,
+                   free_float_pct=free_float, upside_pct=upside,
+                   free_cash_flow_m=cash/1e6 if cash is not None else None)
     score, classification, criteria, strengths, risks, missing = evaluate(metrics)
-
-    quote_source = quote.get("source")
-    fundamentals_source = fundamentals.get("source")
-    used_legacy = bool(legacy) and any(
-        fundamentals.get(key) is None and legacy.get(legacy_key) is not None
-        for key, legacy_key in (
-            ("market_cap", "market_cap"),
-            ("pe_ratio", "pe_ratio"),
-            ("revenue", "revenue"),
-            ("beta", "beta"),
-        )
-    )
-    sources = [source for source in (quote_source, fundamentals_source) if source]
-    if used_legacy:
-        sources.append("Snapshot fundamental persistente")
-    source = " + ".join(dict.fromkeys(sources)) if sources else "Snapshot fundamental persistente"
-
-    fetched_candidates = [
-        value
-        for value in (
-            quote.get("fetched_at"),
-            fundamentals.get("fetched_at"),
-            legacy.get("updated_at"),
-        )
-        if value
-    ]
-    updated_at = max(fetched_candidates) if fetched_candidates else legacy.get("updated_at")
-
+    if all(item["status"] == "sin_dato" for item in criteria):
+        classification = "Actualizando análisis" if refreshing else "Datos insuficientes"
+    # Existing scoring labels assumed USD. Preserve units for other report currencies.
+    for criterion in criteria:
+        key = criterion["key"]
+        unit = financial_currency if key in {"revenue_m", "free_cash_flow_m"} else currency
+        if criterion["formatted_value"].startswith("USD "):
+            criterion["formatted_value"] = criterion["formatted_value"].replace("USD ", (unit or "")+" ", 1).strip()
+    warnings = list(dict.fromkeys(d.get("warning") for d in (quote, fundamentals) if d.get("warning")))
+    if not fundamentals:
+        warnings.append("No hay fundamentales verificados disponibles para este activo.")
+    if quote and fundamentals and not currencies_match:
+        warnings.append("No se confirmó una moneda común; la valoración combinada no está disponible.")
+    if not quote_currency and quote:
+        warnings.append("La moneda de la cotización no está confirmada.")
+    dates = [d["retrieved_at"] for d in (quote, fundamentals) if d.get("retrieved_at")]
+    sources = list(dict.fromkeys(d["source"] for d in (quote, fundamentals) if d.get("source")))
+    valuation = {"price": price, "target_price": target, "upside_percent": upside, "pe_ratio": pe,
+                 "eps": eps if financial_match else None, "earnings_period": fundamentals.get("period_basis"),
+                 "currency_compatible": currencies_match, "financial_currency_compatible": financial_match,
+                 "formula": "P/E = precio / EPS positivo del período indicado; potencial = (objetivo / precio - 1) × 100",
+                 "inputs": {"quote": provenance(quote), "fundamentals": provenance(fundamentals)}}
     return {
-        "ticker": symbol,
-        "company": _first(fundamentals.get("company"), legacy.get("company"), symbol),
-        "description": _first(fundamentals.get("description"), legacy.get("description")),
-        "exchange": _first(fundamentals.get("exchange"), legacy.get("exchange")),
-        "currency": _first(fundamentals.get("currency"), legacy.get("currency"), "USD"),
-        "quote_type": _first(fundamentals.get("quote_type"), legacy.get("quote_type")),
-        "sector": _first(fundamentals.get("sector"), legacy.get("sector")),
-        "industry": _first(fundamentals.get("industry"), legacy.get("industry")),
-        "price": price,
-        "previous_close": previous_close,
-        "change_percent": change_percent,
-        "daily_change_percent": change_percent,
-        "target_price": target,
-        "upside_percent": upside,
-        "upside_pct": upside,
-        "market_cap": market_cap,
-        "pe_ratio": metrics["pe_ratio"],
-        "revenue": revenue,
-        "revenue_millions": metrics["revenue_m"],
-        "free_float_percent": free_float,
-        "volume": safe_num(_first(quote.get("volume"), fundamentals.get("volume"), legacy.get("volume"))),
-        "average_volume": safe_num(_first(fundamentals.get("average_volume"), legacy.get("average_volume"))),
-        "beta": metrics["beta"],
-        "dividend_yield_pct": fundamentals.get("dividend_yield_pct"),
-        "revenue_growth_pct": metrics["revenue_growth_pct"],
-        "earnings_growth_pct": metrics["earnings_growth_pct"],
-        "roe_pct": metrics["roe_pct"],
-        "roa_pct": metrics["roa_pct"],
-        "operating_margin_pct": metrics["operating_margin_pct"],
-        "debt_to_equity": metrics["debt_to_equity"],
-        "current_ratio": metrics["current_ratio"],
-        "free_cash_flow_m": metrics["free_cash_flow_m"],
-        "score": score,
-        "classification": classification,
-        "criteria": criteria,
-        "strengths": strengths,
-        "risks": risks,
-        "missing_data": missing,
-        "updated_at": updated_at,
-        "source": source,
-        "stale": False,
-        "warning": None,
-        "provenance": {
-            "quote": {
-                "provider": quote.get("provider"),
-                "source": quote_source,
-                "fetched_at": quote.get("fetched_at"),
-            },
-            "fundamentals": {
-                "provider": fundamentals.get("provider") or ("persistent_snapshot" if used_legacy else None),
-                "source": fundamentals_source or ("Snapshot fundamental persistente" if used_legacy else None),
-                "fetched_at": fundamentals.get("fetched_at") or legacy.get("updated_at"),
-            },
-        },
+        "ticker": ticker, "company": fundamentals.get("company") or ticker,
+        "description": fundamentals.get("description"), "exchange": fundamentals.get("exchange"),
+        "currency": currency, "financial_currency": financial_currency, "quote_type": fundamentals.get("quote_type"),
+        "sector": fundamentals.get("sector"), "industry": fundamentals.get("industry"),
+        "price": price, "previous_close": quote.get("previous_close"), "change_percent": quote.get("change_percent"),
+        "daily_change_percent": quote.get("change_percent"), "target_price": target,
+        "upside_percent": upside, "upside_pct": upside, "market_cap": cap, "pe_ratio": pe,
+        "revenue": revenue, "revenue_millions": metrics["revenue_m"], "free_float_percent": free_float,
+        "volume": quote.get("volume"), "average_volume": fundamentals.get("average_volume"),
+        "dividend_yield_pct": fundamentals.get("dividend_yield_pct"), **metrics,
+        "score": score, "classification": classification, "criteria": criteria,
+        "refreshing": refreshing,
+        "strengths": strengths, "risks": risks, "missing_data": missing,
+        "updated_at": max(dates) if dates else None, "source": " + ".join(sources),
+        "stale": any(d.get("stale", False) for d in (quote, fundamentals)),
+        "warning": " ".join(warnings) or None,
+        "period_basis": fundamentals.get("period_basis"), "statements": fundamentals.get("statements") or {},
+        "calculation_notes": fundamentals.get("calculation_notes"),
+        "valuation": valuation, "provenance": {"quote": provenance(quote), "fundamentals": provenance(fundamentals)}
     }
 
+def search(query):
+    return search_yahoo(query)
 
-def search(query: str):
-    q = str(query or "").strip()
-    if not q:
-        return []
-    results = search_yahoo(q)
-    if results:
-        return results
-    return [{"ticker": q.upper(), "name": q.upper(), "exchange": None, "type": "Stock"}]
-
-
-def history(ticker: str, period: str = "1y"):
-    symbol = _normalize_symbol(ticker)
-    allowed = {"1mo", "3mo", "6mo", "1y", "2y", "5y"}
-    if period not in allowed:
+def history(ticker, period="1y"):
+    ticker = _normalize_symbol(ticker)
+    if period not in {"1mo", "3mo", "6mo", "1y", "2y", "5y"}:
         period = "1y"
+    data = provider_history(ticker, period, "1wk" if period == "5y" else "1d")
+    if not data:
+        raise HTTPException(status_code=503, detail="No hay un histórico verificado disponible.")
+    return [{"date": p["date"].split("T")[0], "close": p["close"], "volume": p.get("volume")} for p in data["points"]]
 
-    interval = "1wk" if period == "5y" else "1d"
-    data = provider_history(symbol, period, interval)
-    if data is None:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "No fue posible obtener un histórico vigente desde Yahoo Finance "
-                "ni desde Alpha Vantage."
-            ),
-        )
-    return [
-        {
-            "date": point.get("date", "").split("T")[0],
-            "close": point.get("close"),
-            "volume": point.get("volume"),
-        }
-        for point in data["points"]
-    ]
-
-
-def clear_market_cache(ticker: str | None = None):
+def clear_market_cache(ticker=None):
     return None

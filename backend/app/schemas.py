@@ -40,8 +40,19 @@ class StockSummary(BaseModel):
     updated_at: datetime | None = None
     source: str
     stale: bool = False
+    refreshing: bool = False
     warning: str | None = None
     provenance: dict[str, Any] = {}
+    description: str | None = None
+    beta: float | None = None
+    previous_close: float | None = None
+    change_percent: float | None = None
+    upside_percent: float | None = None
+    financial_currency: str | None = None
+    period_basis: str | None = None
+    calculation_notes: str | None = None
+    statements: dict[str, Any] = Field(default_factory=dict)
+    valuation: dict[str, Any] = Field(default_factory=dict)
 
 class SearchResult(BaseModel):
     ticker: str
@@ -76,6 +87,9 @@ class PositionOut(PositionCreate):
     market_value: float | None = None
     unrealized_pnl: float | None = None
     unrealized_pnl_percent: float | None = None
+    stale: bool = False
+    warning: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
     model_config = {"from_attributes": True}
 
 class AiRequest(BaseModel):

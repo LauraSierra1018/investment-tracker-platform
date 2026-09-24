@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from .market_provider import get_history as provider_history
+from .market_data.common import provenance
 
 
 RANGE_CONFIG: dict[str, tuple[str, str]] = {
@@ -35,11 +36,8 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
 
     if data is None:
         detail = (
-            f"No fue posible obtener precios vigentes para {symbol} desde "
-            "Yahoo Finance ni desde Alpha Vantage."
+            f"No hay un histórico verificado disponible para {symbol}."
         )
-        if interval not in {"1d", "1wk"}:
-            detail += " El respaldo de Alpha Vantage no está habilitado para este intervalo intradía."
         raise HTTPException(status_code=503, detail=detail)
 
     points = data.get("points") or []
@@ -62,7 +60,7 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
         "range": requested,
         "period": period,
         "interval": interval,
-        "currency": None,
+        "currency": data.get("currency"),
         "first_close": first_close,
         "last_close": last_close,
         "change_percent": change_percent,
@@ -70,6 +68,11 @@ def get_price_history(ticker: str, range_key: str = "1M") -> dict[str, Any]:
         "provider": data.get("provider"),
         "source": data.get("source"),
         "fetched_at": data.get("fetched_at"),
-        "stale": False,
-        "warning": None,
+        "retrieved_at": data.get("retrieved_at"),
+        "data_timestamp": data.get("data_timestamp"),
+        "price_basis": data.get("price_basis"),
+        "coverage": data.get("coverage"),
+        "provenance": provenance(data),
+        "stale": data.get("stale", False),
+        "warning": data.get("warning"),
     }

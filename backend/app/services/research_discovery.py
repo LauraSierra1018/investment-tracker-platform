@@ -7,6 +7,8 @@ from .market_snapshot import load_snapshot, save_snapshot, load_snapshots
 from .market_provider import _load_get_fundamentals, FUNDAMENTALS_TTL_SECONDS
 from .recommendation_fit import number
 from .scoring import evaluate
+from .market_data import fmp_provider
+from .market_data.common import valid, provenance
 
 CATALOG_TTL = 6 * 60 * 60
 # Seeds extend discovery to ETF categories unsupported by EquityQuery in 0.2.65.
@@ -35,6 +37,12 @@ def as_candidate(row):
 
 
 def _discover():
+    primary = fmp_provider.discover()
+    if primary:
+        payload = {"items": primary, "next_offset": 0, "partial": True,
+                   "fetched_at": datetime.now(timezone.utc).isoformat()}
+        save_snapshot("research_catalog", "default", payload)
+        return payload
     previous = load_snapshot("research_catalog", "default", CATALOG_TTL*4) or {}
     # Paginate the broad screen across refreshes; merge still-current discoveries.
     offset = int(previous.get("next_offset", 0))
@@ -97,7 +105,7 @@ def from_fundamentals(ticker, data):
         metrics[target] = value/scale if value is not None else None
     score = evaluate(metrics)[0] if any(v is not None for v in metrics.values()) else None
     return {**data, "ticker": ticker, "score": score, "asset_type": data.get("quote_type", "EQUITY"),
-            "source": "research_fundamentals"}
+            "source": data.get("source"), "provenance": {"fundamentals": provenance(data)}}
 
 
 def research_candidates(db, registered):
@@ -122,14 +130,17 @@ def research_candidates(db, registered):
     # Bounded SQL batches; this does not download one quote per candidate.
     fundamentals = {}
     for start in range(0, len(symbols), 250):
-        fundamentals.update(load_snapshots("fundamentals", symbols[start:start+250], FUNDAMENTALS_TTL_SECONDS))
+        fundamentals.update(load_snapshots("md_fundamentals", symbols[start:start+250], FUNDAMENTALS_TTL_SECONDS))
     for ticker, data in fundamentals.items():
-        if fresh(data.get("fetched_at")):
+        if fresh(data.get("fetched_at")) and valid(data, ticker, "fundamentals"):
             record = from_fundamentals(ticker, data)
-            # A partial fundamentals response must not erase a still-current
-            # catalog price or other independently observed metrics.
-            output[ticker] = {**output.get(ticker, {}),
-                             **{key: value for key, value in record.items() if value is not None}}
+            previous = output.get(ticker, {})
+            # A quote and fundamentals are distinct datasets. Keep only the observed
+            # catalog price, with explicit provenance; never fill missing ratios.
+            record["price"] = previous.get("price") if not previous.get("currency") or previous.get("currency") == data.get("currency") else None
+            record["provenance"]["quote"] = {"source": previous.get("source"),
+                "retrieved_at": previous.get("fetched_at"), "currency": previous.get("currency")}
+            output[ticker] = record
     # Refresh a small rotating group. Existing registered assets stay discoverable
     # after 24h, but old numerical data is never treated as newly fetched.
     missing = [s for s in symbols if not fresh(fundamentals.get(s, {}).get("fetched_at"))]
@@ -137,11 +148,11 @@ def research_candidates(db, registered):
     cursor = int(cursor_state.get("cursor", 0)) % max(1, len(missing))
     selected = (missing[cursor:] + missing[:cursor])[:4]
     for ticker in selected:
-        refreshes.get(("fundamentals", ticker), lambda t=ticker: _load_get_fundamentals(t), wait=0)
+        refreshes.get(("md_fundamentals", ticker), lambda t=ticker: _load_get_fundamentals(t), wait=0)
     if selected:
         save_snapshot("research_rotation", "default", {"cursor": cursor+len(selected)})
     with refreshes.lock:
-        refreshing = _key in refreshes.pending or any(("fundamentals", t) in refreshes.pending for t in selected)
+        refreshing = _key in refreshes.pending or any(("md_fundamentals", t) in refreshes.pending for t in selected)
     return list(output.values()), {"evaluated": len(output), "known": len(symbols),
         "refreshing": refreshing, "partial": bool(catalog.get("partial")) or bool(missing),
         "as_of": catalog.get("fetched_at"),

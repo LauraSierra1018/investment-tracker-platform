@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pandas as pd
-from app.services import market_provider as provider
+from app.services.market_data import market_data_service as provider, yahoo_provider as yahoo
+from app.services.market_data.common import stamp, now
 from app.services import market_requests as network
 
 
@@ -112,8 +113,8 @@ class DataTests(unittest.TestCase):
     def test_missing_ticker_never_uses_another_tickers_close(self):
         for columns in [[('Close', 'AAPL')], [('AAPL', 'Close')]]:
             frame = pd.DataFrame([[100], [101]], columns=pd.MultiIndex.from_tuples(columns))
-            self.assertIsNone(provider._extract_close_series(frame, 'MISSING'))
-            self.assertEqual(provider._quote_from_frame(frame, 'AAPL')['price'], 101)
+            self.assertTrue(yahoo.history_frame(frame, 'MISSING').empty)
+            self.assertEqual(yahoo.frame_points(yahoo.history_frame(frame, 'AAPL'))[-1]['close'], 101)
 
     def test_distinct_trading_days_and_ohlc_are_preserved_in_batch(self):
         dates = pd.to_datetime(['2026-09-09', '2026-09-10', '2026-09-11'])
@@ -125,19 +126,16 @@ class DataTests(unittest.TestCase):
             ('TM', 'Open'): [None, 190., 205.],
             ('TM', 'Volume'): [None, 30., 40.],
         }, index=dates)
-        with patch.object(provider, 'load_snapshots', return_value={}), \
-             patch.object(provider, '_yahoo_available', return_value=True), \
-             patch.object(provider, 'download', return_value=frame) as fetch, \
-             patch.object(provider, 'save_snapshots') as save, \
-             patch.object(provider, '_alpha_daily_history', return_value=None):
-            result = provider._load_histories(['AAPL', 'TM', 'BAD'], '1mo', '1d')
+        with patch.object(yahoo, 'available', return_value=True), \
+             patch.object(yahoo, 'currency_for', return_value='USD'), \
+             patch.object(yahoo, 'download', return_value=frame) as fetch:
+            result = yahoo.histories(['AAPL', 'TM', 'BAD'], '1mo', '1d')
         self.assertEqual(set(result), {'AAPL', 'TM'})
         self.assertEqual([p['date'][:10] for p in result['AAPL']['points']], ['2026-09-09', '2026-09-11'])
         self.assertEqual([p['close'] for p in result['TM']['points']], [200., 210.])
         self.assertEqual(result['TM']['points'][0]['open'], 190.)
         self.assertEqual(result['TM']['points'][0]['volume'], 30)
         fetch.assert_called_once()
-        save.assert_called_once()
 
     def test_download_contract_disables_threads_and_groups_by_ticker(self):
         yf = SimpleNamespace(download=Mock(return_value=pd.DataFrame()))
@@ -149,33 +147,36 @@ class DataTests(unittest.TestCase):
         self.assertIs(kwargs['session'], network.yahoo_session)
 
     def test_fresh_cached_quotes_do_not_enqueue_network_work(self):
-        with patch.object(provider, 'load_snapshots', return_value={'AAPL': {'price': 10}}), \
+        data = {'AAPL': {**stamp('massive', 'AAPL', now().isoformat(), 'USD'), 'price': 10}}
+        with patch.object(provider, 'load_snapshots', return_value=data), \
              patch.object(provider.refreshes, 'get') as refresh:
-            self.assertEqual(provider.get_quotes(['aapl', 'AAPL']), {'AAPL': {'price': 10}})
+            self.assertEqual(provider.get_quotes(['aapl', 'AAPL']), data)
             refresh.assert_not_called()
 
     def test_partial_cache_is_returned_when_refresh_is_busy(self):
-        with patch.object(provider, 'load_snapshots', return_value={'AAPL': {'price': 10}}), \
+        data = {'AAPL': {**stamp('massive', 'AAPL', now().isoformat(), 'USD'), 'price': 10}}
+        with patch.object(provider, 'load_snapshots', side_effect=lambda kind, keys, ttl: {k:v for k,v in data.items() if k in keys}), \
              patch.object(provider.refreshes, 'get', return_value={}):
-            self.assertEqual(provider.get_quotes(['AAPL', 'TM']), {'AAPL': {'price': 10}})
+            self.assertEqual(provider.get_quotes(['AAPL', 'TM']), data)
 
     def test_background_refresh_writes_cache_after_caller_times_out(self):
         pool = network.RefreshPool(workers=1)
         release = threading.Event()
         called = threading.Event()
-        def yahoo(symbol):
+        data = {**stamp('fmp', 'AAPL', '2025-12-31', 'USD'), 'company': 'Apple', 'revenue': 20}
+        def financials(symbol):
             called.set()
             release.wait(2)
-            return {'company': symbol}
+            return data
         try:
-            with patch.object(provider, 'load_snapshot', return_value=None), \
-                 patch.object(provider, '_yahoo_fundamentals', side_effect=yahoo), \
+            with patch.object(provider, 'load_snapshots', return_value={}), \
+                 patch.object(provider.fmp, 'fundamentals', side_effect=financials), \
                  patch.object(provider, 'save_snapshot') as save:
                 self.assertIsNone(pool.get(('fundamentals', 'AAPL'), lambda: provider._load_get_fundamentals('AAPL'), wait=.01))
                 self.assertTrue(called.wait(1))
                 release.set()
                 pool.executor.shutdown(wait=True)
-                save.assert_called_once_with('fundamentals', 'AAPL', {'company': 'AAPL'})
+                save.assert_called_once_with('md_fundamentals', 'AAPL', data)
         finally:
             release.set()
             pool.executor.shutdown(wait=True)
@@ -184,13 +185,12 @@ class DataTests(unittest.TestCase):
 
 
 class PartialResponseTests(unittest.TestCase):
-    def test_legacy_fundamentals_without_timestamp_do_not_cause_500(self):
+    def test_partial_fundamentals_without_quote_do_not_cause_500(self):
         from fastapi.testclient import TestClient
         from app.main import app
         from app.services import market
-        with patch.object(market, 'get_fundamentals', return_value=None), \
-             patch.object(market, 'get_quote', return_value=None), \
-             patch.object(market, '_legacy_stock', return_value={'company': 'Apple'}):
+        with patch.object(market, 'get_fundamentals', return_value={'company': 'Apple'}), \
+             patch.object(market, 'get_quote', return_value=None):
             response = TestClient(app).get('/stocks/AAPL')
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()['price'])
@@ -201,8 +201,7 @@ class PartialResponseTests(unittest.TestCase):
         from app.main import app
         from app.services import market
         with patch.object(market, 'get_fundamentals', return_value=None), \
-             patch.object(market, 'get_quote', return_value=None), \
-             patch.object(market, '_legacy_stock', return_value={}):
+             patch.object(market, 'get_quote', return_value=None):
             response = TestClient(app).get('/stocks/AAPL')
         self.assertEqual(response.status_code, 503)
 

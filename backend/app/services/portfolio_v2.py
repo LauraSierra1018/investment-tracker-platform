@@ -150,11 +150,16 @@ def enrich_positions(db: Session, positions):
 
         price = safe_float(stock.get("price"))
 
-        if price is None and stored_asset is not None:
-            price = safe_float(stored_asset.last_price)
+        quote_meta = (stock.get("provenance") or {}).get("quote") or {}
+        if quote_meta.get("currency") != position.currency:
+            price = None
+        price_provenance = quote_meta
 
         if price is None and isinstance(position, BrokerPosition):
             price = safe_float(position.last_price)
+            price_provenance = {"source": "SnapTrade (snapshot del broker)",
+                                "retrieved_at": position.updated_at.isoformat() if position.updated_at else None,
+                                "currency": position.currency, "stale": True}
 
         invested = float(position.quantity) * float(position.average_cost)
 
@@ -189,38 +194,24 @@ def enrich_positions(db: Session, positions):
             sector = "Sin sector"
 
         score = safe_float(stock.get("score"))
-        if score is None and stored_asset is not None:
-            score = safe_float(stored_asset.score)
 
         beta = safe_float(stock.get("beta"))
-        if beta is None and stored_asset is not None:
-            beta = safe_float(stored_asset.beta)
 
         pe_ratio = safe_float(stock.get("pe_ratio"))
-        if pe_ratio is None and stored_asset is not None:
-            pe_ratio = safe_float(stored_asset.pe_ratio)
 
-        revenue_growth = normalized_percent(
+        revenue_growth = safe_float(
             stock.get("revenue_growth_pct")
             if stock.get("revenue_growth_pct") is not None
             else stock.get("revenue_growth")
         )
 
-        if revenue_growth is None and stored_asset is not None:
-            revenue_growth = normalized_percent(
-                stored_asset.revenue_growth_percent
-            )
 
-        earnings_growth = normalized_percent(
+        earnings_growth = safe_float(
             stock.get("earnings_growth_pct")
             if stock.get("earnings_growth_pct") is not None
             else stock.get("earnings_growth")
         )
 
-        if earnings_growth is None and stored_asset is not None:
-            earnings_growth = normalized_percent(
-                stored_asset.earnings_growth_percent
-            )
 
         result.append(
             {
@@ -228,6 +219,10 @@ def enrich_positions(db: Session, positions):
                 "quantity": float(position.quantity),
                 "invested": invested,
                 "market_value": market_value,
+                "value_basis": "market" if price is not None else "cost_estimate",
+                "currency": position.currency,
+                "stale": stock.get("stale", False) or price_provenance.get("stale", False),
+                "provenance": {"quote": price_provenance, "fundamentals": (stock.get("provenance") or {}).get("fundamentals")},
                 "sector": sector,
                 "score": score,
                 "beta": beta,
@@ -277,6 +272,10 @@ def aggregate_positions(enriched):
                 "revenue_growth": safe_float(row.get("revenue_growth")),
                 "earnings_growth": safe_float(row.get("earnings_growth")),
                 "lots": 0,
+                "value_basis": row.get("value_basis", "market"),
+                "currency": row.get("currency"),
+                "stale": row.get("stale", False),
+                "provenance": row.get("provenance", {}),
             }
 
         item = grouped[ticker]
@@ -284,6 +283,9 @@ def aggregate_positions(enriched):
         item["invested"] += invested
         item["market_value"] += market_value
         item["lots"] += 1
+        if row.get("value_basis") == "cost_estimate":
+            item["value_basis"] = "cost_estimate"
+        item["stale"] = item["stale"] or row.get("stale", False)
 
         # Preferimos cualquier dato válido frente a un fallback vacío.
         if item["sector"] == "Sin sector" and row.get("sector"):
@@ -315,7 +317,7 @@ def aggregate_positions(enriched):
 
         item["current_price"] = (
             market_value / quantity
-            if quantity > 0
+            if quantity > 0 and item["value_basis"] == "market"
             else None
         )
 
@@ -864,6 +866,12 @@ def build_analysis(db, user_id, profile=None, preferences=None):
 
     assets, sectors = allocations(enriched)
     health_data, alerts = health(enriched, assets, sectors)
+    estimated = any(x.get("value_basis") == "cost_estimate" for x in enriched)
+    stale = any(x.get("stale") for x in enriched)
+    if estimated:
+        alerts.insert(0, {"type": "warning", "text": "Valoración parcial: las posiciones sin cotización compatible usan su costo únicamente como estimación para la distribución. El resultado del portafolio no es una valoración actual verificada."})
+    elif stale:
+        alerts.insert(0, {"type": "warning", "text": "La valoración incluye el último dato guardado o un snapshot del broker; revisa las fechas antes de interpretarla."})
     candidates, coverage = recommendations(db, profile, enriched, preferences, with_coverage=True)
 
     return {
@@ -878,6 +886,8 @@ def build_analysis(db, user_id, profile=None, preferences=None):
             "lots": len(enriched_lots),
             "sectors": len(sectors),
             "source": portfolio_source,
+            "estimated": estimated,
+            "stale": stale,
         },
         "health": health_data,
         "allocation_by_asset": assets,
@@ -910,6 +920,9 @@ def build_analysis(db, user_id, profile=None, preferences=None):
                 "score": x["score"],
                 "beta": x["beta"],
                 "lots": x["lots"],
+                "value_basis": x.get("value_basis"),
+                "stale": x.get("stale"),
+                "provenance": x.get("provenance"),
             }
             for x in enriched
         ],

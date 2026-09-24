@@ -52,7 +52,8 @@ def search_assets(query: str) -> List[Dict]:
 
     results = search_yahoo(query)
     if not results:
-        symbol = query.upper()
-        results = [{"ticker": symbol, "name": symbol, "type": "Stock", "exchange": ""}]
+        # Suggestions are known identifiers, never an invented asset for arbitrary input.
+        results = [item for item in DEFAULT_SUGGESTIONS if query.lower() in
+                   (item["ticker"]+" "+item["name"]).lower()]
 
     return [_with_logo(item) for item in results if item.get("ticker")]

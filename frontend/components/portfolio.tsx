@@ -55,6 +55,9 @@ type PortfolioItem = {
   unrealized_pnl_percent?: number | null;
   read_only?: boolean;
   source?: string;
+  stale?: boolean;
+  warning?: string | null;
+  provenance?: { source?: string; data_timestamp?: string; retrieved_at?: string };
   account_id?: string | null;
 };
 
@@ -97,6 +100,8 @@ type Analysis = {
     positions: number;
     sectors: number;
     source?: string;
+    estimated?: boolean;
+    stale?: boolean;
   };
   health: {
     diversification_score: number;
@@ -836,7 +841,7 @@ function RealPortfolio() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Summary
-          label="Valor actual"
+          label={summary?.estimated ? "Valor estimado" : "Valor actual"}
           value={money(summary?.market_value ?? 0)}
         />
         <Summary
@@ -845,8 +850,8 @@ function RealPortfolio() {
         />
         <Summary
           label="P/L"
-          value={`${pnlPositive ? '+' : ''}${money(summary?.pnl ?? 0)}`}
-          subtitle={`${pnlPositive ? '+' : ''}${(summary?.pnl_percent ?? 0).toFixed(2)}%`}
+          value={summary?.estimated ? 'Sin valoración completa' : `${pnlPositive ? '+' : ''}${money(summary?.pnl ?? 0)}`}
+          subtitle={summary?.estimated ? 'Faltan cotizaciones verificadas' : `${pnlPositive ? '+' : ''}${(summary?.pnl_percent ?? 0).toFixed(2)}%`}
         />
         <Summary
           label="Posiciones"
@@ -1309,7 +1314,11 @@ function RealPortfolio() {
 
                   return (
                     <tr key={item.id}>
-                      <td className="p-4 font-black">{item.ticker}</td>
+                      <td className="p-4 font-black">{item.ticker}
+                        {(item.warning || item.provenance?.source) && <details className="mt-1 max-w-60 text-xs font-normal text-slate-500"><summary className="cursor-pointer">{item.stale ? 'Dato guardado' : 'Datos de esta posición'}</summary>
+                          <p>{item.warning}</p><p>{item.provenance?.source}</p><p>{item.provenance?.data_timestamp ? new Date(item.provenance.data_timestamp).toLocaleString('es-CO') : 'Fecha del precio no informada'}</p>
+                        </details>}
+                      </td>
                       <td className="p-4 text-right">
                         {item.quantity.toFixed(4)}
                       </td>

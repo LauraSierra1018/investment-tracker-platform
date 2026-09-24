@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
 
     alpha_vantage_api_key: str = ""
+    massive_api_key: str = ""
+    fmp_api_key: str = ""
+    # Tune these only to match the quotas in the provider account.
+    massive_request_spacing: float = 12.0
+    fmp_request_spacing: float = 0.5
+    alpha_vantage_request_spacing: float = 12.0
 
     # SnapTrade
     snaptrade_client_id: str = ""

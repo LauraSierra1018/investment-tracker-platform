@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 from .market_requests import market_budget
+from .market_data.common import provenance as data_provenance
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -61,6 +62,9 @@ def build_history(db: Session, user_id: str, range_name: str):
         }
 
     period = PERIODS.get(range_name, "3mo")
+    currencies = {position.currency for position in positions}
+    if len(currencies) > 1:
+        raise HTTPException(503, "El histórico agregado requiere una moneda común; no se aplican conversiones de divisa implícitas.")
     quantities: dict[str, float] = defaultdict(float)
     for position in positions:
         ticker = str(position.ticker or "").strip().upper()
@@ -77,6 +81,9 @@ def build_history(db: Session, user_id: str, range_name: str):
         if not data or not data.get("points"):
             unavailable.append(ticker)
             continue
+        if data.get("currency") not in currencies:
+            unavailable.append(ticker)
+            continue
 
         closes: dict[str, float] = {}
         for point in data["points"]:
@@ -90,11 +97,7 @@ def build_history(db: Session, user_id: str, range_name: str):
             continue
 
         series[ticker] = (closes, quantity)
-        provenance[ticker] = {
-            "provider": data.get("provider"),
-            "source": data.get("source"),
-            "fetched_at": data.get("fetched_at"),
-        }
+        provenance[ticker] = data_provenance(data)
 
     if unavailable:
         raise HTTPException(
@@ -134,5 +137,7 @@ def build_history(db: Session, user_id: str, range_name: str):
         "range": range_name,
         "points": points,
         "provenance": provenance,
-        "source": "Yahoo Finance primary; Alpha Vantage fallback",
+        "source": " + ".join(sorted({p["source"] for p in provenance.values() if p.get("source")})),
+        "stale": any(p.get("stale") for p in provenance.values()),
+        "warning": "El histórico incluye datos guardados sin actualizar." if any(p.get("stale") for p in provenance.values()) else None,
     }

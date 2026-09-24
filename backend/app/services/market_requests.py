@@ -70,6 +70,10 @@ class RefreshPool:
                     self.failed.pop(next(iter(self.failed)), None)
                 self.failed[key] = time.monotonic() + self.retry_seconds
 
+    def is_pending(self, key):
+        with self.lock:
+            return key in self.pending
+
     def get(self, key, loader, fallback=None, wait=8):
         # Check and enqueue atomically; identical requests share the same work.
         with self.lock:

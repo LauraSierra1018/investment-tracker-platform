@@ -7,6 +7,7 @@ from .market_requests import market_budget
 from fastapi import HTTPException
 
 from .market_provider import get_quotes
+from .market_data.common import provenance as data_provenance
 from .market_snapshot import load_snapshot, save_snapshot, load_snapshots
 
 
@@ -32,7 +33,7 @@ INDEXES = [
     ("^VIX", "VIX"),
 ]
 
-CACHE_SECONDS = 10 * 60
+CACHE_SECONDS = 60
 
 
 def _cached_market_cap(symbol: str, snapshots: dict) -> tuple[float | None, str | None, str | None]:
@@ -51,7 +52,7 @@ def _build_payload() -> dict[str, Any]:
         symbol for symbol, _ in INDEXES
     ]
     quotes = get_quotes(all_symbols)
-    fundamentals = load_snapshots("fundamentals", [s for s, _, _ in MAJOR_STOCKS], 24 * 60 * 60)
+    fundamentals = load_snapshots("md_fundamentals", [s for s, _, _ in MAJOR_STOCKS], 24 * 60 * 60)
 
     stocks: list[dict[str, Any]] = []
     indices: list[dict[str, Any]] = []
@@ -68,9 +69,12 @@ def _build_payload() -> dict[str, Any]:
             "previous_close": quote.get("previous_close"),
             "change_percent": quote.get("change_percent"),
             "market_cap": market_cap,
+            "stale": quote.get("stale", False),
+            "data_timestamp": quote.get("data_timestamp"),
         })
         provenance[symbol] = {
             "quote_source": quote.get("source"),
+            "quote": data_provenance(quote),
             "quote_fetched_at": quote.get("fetched_at"),
             "fundamentals_source": fundamentals_source,
             "fundamentals_fetched_at": fundamentals_fetched_at,
@@ -85,9 +89,12 @@ def _build_payload() -> dict[str, Any]:
             "previous_close": quote.get("previous_close"),
             "change_percent": quote.get("change_percent"),
             "market_cap": None,
+            "stale": quote.get("stale", False),
+            "data_timestamp": quote.get("data_timestamp"),
         })
         provenance[symbol] = {
             "quote_source": quote.get("source"),
+            "quote": data_provenance(quote),
             "quote_fetched_at": quote.get("fetched_at"),
         }
 
@@ -96,7 +103,7 @@ def _build_payload() -> dict[str, Any]:
             status_code=503,
             detail=(
                 "No fue posible obtener cotizaciones vigentes del panorama de mercado "
-                "desde Yahoo Finance ni desde Alpha Vantage."
+                "desde los proveedores configurados."
             ),
         )
 
@@ -123,11 +130,11 @@ def _build_payload() -> dict[str, Any]:
             "declining": declining,
             "unchanged": max(0, len(valid_changes) - advancing - declining),
         },
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": max((q.get("retrieved_at") or q.get("fetched_at") or "" for q in quotes.values()), default=None),
         "refresh_seconds": CACHE_SECONDS,
-        "source": "Yahoo Finance primary; Alpha Vantage fallback",
-        "stale": False,
-        "warning": None,
+        "source": " + ".join(sorted({q["source"] for q in quotes.values() if q.get("source")})),
+        "stale": any(q.get("stale") for q in quotes.values()),
+        "warning": "Algunas cotizaciones son el último dato guardado." if any(q.get("stale") for q in quotes.values()) else None,
         "provenance": provenance,
         "note": (
             "Cada valor conserva su fuente y momento de consulta. Los campos no "
@@ -139,10 +146,10 @@ def _build_payload() -> dict[str, Any]:
 @market_budget
 def market_overview(force_refresh: bool = False) -> dict[str, Any]:
     if not force_refresh:
-        cached = load_snapshot("market_overview", "default", CACHE_SECONDS)
+        cached = load_snapshot("market_overview", "multi_provider_v1", CACHE_SECONDS)
         if isinstance(cached, dict):
             return cached
 
     payload = _build_payload()
-    save_snapshot("market_overview", "default", payload)
+    save_snapshot("market_overview", "multi_provider_v1", payload)
     return payload

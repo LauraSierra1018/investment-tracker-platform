@@ -1,3 +1,12 @@
+# Verification
+
+The current multi-provider architecture and setup are documented in
+[MARKET_DATA.md](../MARKET_DATA.md). test_market_data.py and
+test_market_workflows.py exercise provider policy, validation, circuits,
+valuation/risk and existing API workflows without contacting external services.
+The Yahoo section below describes the original transport tests, which remain
+applicable; dataset priority and cache policy are now defined in MARKET_DATA.md.
+
 # PDF import validation
 
 Run offline checks from backend:

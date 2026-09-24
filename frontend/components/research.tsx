@@ -36,7 +36,7 @@ import { goalLabels, riskLabels, type PortfolioPreferences, type ResearchCoverag
 import { createClient } from '@/lib/supabase/client';
 import { StockSearch } from '@/components/stock-search';
 import { ResearchCompare } from '@/components/research-compare';
-import type { Stock } from '@/types';
+import type { Stock, DataProvenance } from '@/types';
 
 type ResearchTab = 'overview' | 'fundamentals' | 'valuation' | 'risk' | 'compare' | 'ai';
 type ChartRange = '1D' | '5D' | '1M' | '6M' | 'YTD' | '1Y' | '5Y';
@@ -71,6 +71,16 @@ type HistoryResponse = {
   change_percent: number | null;
   points: HistoryPoint[];
   source: string;
+  data_timestamp?: string;
+  retrieved_at?: string;
+  stale?: boolean;
+  warning?: string | null;
+};
+
+type RiskResponse = {
+  ticker: string; annualized_volatility: number | null; max_drawdown: number | null;
+  observations: number; start: string; end: string; warning?: string | null;
+  method: string; provenance: DataProvenance;
 };
 
 type AiResult = {
@@ -138,6 +148,9 @@ export function Research() {
   const router = useRouter();
 
   const [stock, setStock] = useState<Stock | null>(null);
+  const stockRequest = useRef(0);
+  const stockPolls = useRef(0);
+  const [refreshError, setRefreshError] = useState('');
   const [activeTab, setActiveTab] = useState<ResearchTab>('overview');
 
   const [loading, setLoading] = useState(false);
@@ -213,7 +226,7 @@ export function Research() {
     loadPortfolioOpportunities();
     const ticker = new URLSearchParams(window.location.search).get('ticker');
     if (ticker) runTicker(ticker);
-    return () => { opportunityRequest.current += 1; };
+    return () => { opportunityRequest.current += 1; stockRequest.current += 1; };
   }, []);
 
   useEffect(() => {
@@ -224,6 +237,25 @@ export function Research() {
     }, 5000);
     return () => clearTimeout(timer);
   }, [coverage]);
+
+  useEffect(() => {
+    if (!stock?.refreshing || stockPolls.current >= 4) return;
+    const requestId = stockRequest.current;
+    const ticker = stock.ticker;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      stockPolls.current += 1;
+      try {
+        const result = await api<Stock>(`/stocks/${encodeURIComponent(ticker)}`);
+        if (!cancelled && requestId === stockRequest.current) setStock(result);
+      } catch {
+        if (!cancelled && requestId === stockRequest.current) {
+          setRefreshError('No pudimos completar la actualización. Puedes volver a intentarlo.');
+        }
+      }
+    }, 5000 * (stockPolls.current + 1));
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [stock]);
 
   function testInPortfolioLab(ticker: string) {
     localStorage.setItem('portfolio-lab-pending-ticker', ticker.toUpperCase());
@@ -251,6 +283,10 @@ export function Research() {
     const cleanTicker = ticker.trim().toUpperCase();
     if (!cleanTicker) return;
 
+    const requestId = ++stockRequest.current;
+    stockPolls.current = 0;
+    setRefreshError('');
+    setStock(null);
     setLoading(true);
     setError('');
     setSaved(false);
@@ -265,6 +301,7 @@ export function Research() {
       const result = await api<Stock>(
         `/stocks/${encodeURIComponent(cleanTicker)}`
       );
+      if (requestId !== stockRequest.current) return;
       setStock(result);
       api(`/portfolio/universe/${encodeURIComponent(cleanTicker)}`, {
         method: 'POST',
@@ -272,6 +309,7 @@ export function Research() {
         // Registrar el activo en Research Universe no debe bloquear la investigación.
       });
     } catch (e: any) {
+      if (requestId !== stockRequest.current) return;
       console.error('Error buscando activo:', e);
       setError(
         e?.message || 'No fue posible obtener la información de este activo.'
@@ -279,7 +317,7 @@ export function Research() {
       setStock(null);
       setHistory(null);
     } finally {
-      setLoading(false);
+      if (requestId === stockRequest.current) setLoading(false);
     }
   }
 
@@ -567,6 +605,16 @@ export function Research() {
 
       {stock && (
         <>
+          {stock.refreshing && (
+            <div role="status" className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-900">
+              {refreshError || (stockPolls.current >= 4
+                ? 'La actualización está tardando más de lo esperado.'
+                : 'Estamos completando el análisis. Los nuevos datos aparecerán aquí automáticamente.')}
+              {(refreshError || stockPolls.current >= 4) && (
+                <button className="ml-2 font-bold underline" onClick={() => runTicker(stock.ticker)}>Actualizar análisis</button>
+              )}
+            </div>
+          )}
           <AssetHeader
             stock={stock}
             saved={saved}
@@ -641,7 +689,7 @@ export function Research() {
           )}
 
           {activeTab === 'risk' && (
-            <RiskTab stock={stock} criteria={criteria} history={history} />
+            <RiskTab stock={stock} criteria={criteria} />
           )}
 
           {activeTab === 'compare' && (
@@ -723,7 +771,7 @@ function AssetHeader({
                 }`}
               >
                 {dailyChange >= 0 ? '+' : ''}
-                {Number(dailyChange).toFixed(2)}% hoy
+                {Number(dailyChange).toFixed(2)}% · última variación
               </p>
             )}
           </div>
@@ -987,7 +1035,9 @@ function ScoreCard({
 }) {
   const score = Number(stock.score ?? 0);
   const scoreStyle =
-    score >= 75
+    summary.available === 0
+      ? 'text-slate-500 bg-slate-50'
+      : score >= 75
       ? 'text-emerald-600 bg-emerald-50'
       : score >= 55
       ? 'text-amber-600 bg-amber-50'
@@ -1004,7 +1054,7 @@ function ScoreCard({
       </div>
 
       <div className={`mt-6 rounded-2xl p-5 text-center ${scoreStyle}`}>
-        <div className="text-5xl font-black">{score.toFixed(0)}</div>
+        <div className="text-5xl font-black">{summary.available ? score.toFixed(0) : '—'}</div>
         <div className="mt-1 text-xs font-black uppercase tracking-[0.2em]">de 100</div>
       </div>
 
@@ -1218,8 +1268,33 @@ function FundamentalsTab({
         positiveTitle="Fortalezas del negocio"
         negativeTitle="Puntos a vigilar"
       />
+      <FinancialStatements stock={stock} />
     </div>
   );
+}
+
+function FinancialStatements({ stock }: { stock: Stock }) {
+  const groups = [
+    { key: 'income', title: 'Estado de resultados', fields: [['revenue', 'Ingresos'], ['net_income', 'Utilidad neta'], ['operating_income', 'Resultado operativo']] },
+    { key: 'balance', title: 'Balance general', fields: [['assets', 'Activos'], ['equity', 'Patrimonio'], ['debt', 'Deuda'], ['current_assets', 'Activos corrientes'], ['current_liabilities', 'Pasivos corrientes']] },
+    { key: 'cash_flow', title: 'Flujo de caja', fields: [['operating_cash_flow', 'Caja operativa'], ['capital_expenditure', 'Inversión de capital'], ['free_cash_flow', 'Flujo de caja libre']] },
+  ];
+  return <section className="card space-y-4 p-6">
+    <div><h3 className="text-lg font-semibold">Las cifras del negocio</h3>
+      <p className="mt-1 text-sm text-slate-500">Estados anuales tal como los entrega la fuente. Las cifras conservan la moneda del informe.</p>
+      <p className="mt-1 text-xs text-slate-500">Base de las métricas: {stock.period_basis === 'TTM' ? 'últimos doce meses; crecimiento interanual del trimestre' : stock.period_basis === 'FY' ? 'ejercicio anual' : 'no disponible'}. {stock.calculation_notes}</p>
+    </div>
+    {groups.map(group => {
+      const rows = stock.statements?.[group.key] ?? [];
+      return <details key={group.key} className="rounded-xl border border-slate-200 p-4">
+        <summary className="cursor-pointer text-sm font-semibold">{group.title} <span className="ml-2 font-normal text-slate-500">{rows.length ? rows[0].period_end : 'Sin datos disponibles'}</span></summary>
+        {rows.length ? <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm">
+          <thead><tr><th className="py-2">Concepto</th>{rows.map(row => <th key={row.period_end} className="px-3 py-2 text-right">{row.period_end}<span className="block font-normal text-slate-500">{row.currency}</span></th>)}</tr></thead>
+          <tbody>{group.fields.map(([field,label]) => <tr key={field} className="border-t border-slate-100"><td className="py-2">{label}</td>{rows.map(row => <td key={row.period_end} className="px-3 py-2 text-right tabular-nums">{typeof row[field] === 'number' ? Number(row[field]).toLocaleString('es-CO', { maximumFractionDigits: 2 }) : '—'}</td>)}</tr>)}</tbody>
+        </table></div> : <p className="mt-3 text-sm text-slate-500">Este estado no está disponible en los proveedores configurados. No se completan sus cifras con estimaciones.</p>}
+      </details>;
+    })}
+  </section>;
 }
 
 function ValuationTab({
@@ -1234,16 +1309,8 @@ function ValuationTab({
   const score = calculateSectionScore(valuationCriteria);
 
   const price = stock.price != null ? Number(stock.price) : null;
-  const target =
-    s.target_price != null
-      ? Number(s.target_price)
-      : criterionNumber(criteria, ['target', 'precio objetivo']);
-  const upside =
-    s.upside_percent ??
-    s.upside_pct ??
-    (price != null && price > 0 && target != null
-      ? ((target - price) / price) * 100
-      : criterionNumber(criteria, ['upside', 'potencial']));
+  const target = stock.valuation?.target_price ?? null;
+  const upside = stock.valuation?.upside_percent ?? null;
 
   return (
     <div className="space-y-5">
@@ -1254,6 +1321,7 @@ function ValuationTab({
         score={score}
         scoreLabel={scoreLabel(score)}
       />
+      {stock.valuation?.formula && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">{stock.valuation.formula}. Base de ganancias: {stock.valuation.earnings_period || 'sin dato'}.</p>}
 
       <MetricStrip
         items={[
@@ -1349,12 +1417,23 @@ function ValuationTab({
 function RiskTab({
   stock,
   criteria,
-  history,
 }: {
   stock: Stock;
   criteria: Criterion[];
-  history: HistoryResponse | null;
 }) {
+  const [risk, setRisk] = useState<RiskResponse | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setRisk(null); setError(''); setLoading(true);
+    api<RiskResponse>(`/stocks/${encodeURIComponent(stock.ticker)}/risk`)
+      .then(data => { if (active) setRisk(data); })
+      .catch(error => { if (active) setError(error?.message || 'No se pudo cargar el histórico de riesgo.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [stock.ticker, retry]);
   const riskCriteria = filterRiskCriteria(criteria);
   const score = calculateRiskScore(riskCriteria);
   const beta =
@@ -1362,8 +1441,9 @@ function RiskTab({
       ? Number((stock as any).beta)
       : criterionNumber(criteria, ['beta']);
 
-  const drawdown = calculateMaxDrawdown(history?.points ?? []);
-  const volatility = calculateAnnualizedVolatility(history?.points ?? []);
+  const current = risk?.ticker === stock.ticker ? risk : null;
+  const drawdown = current?.max_drawdown ?? null;
+  const volatility = current?.annualized_volatility ?? null;
 
   return (
     <div className="space-y-5">
@@ -1374,6 +1454,11 @@ function RiskTab({
         score={score}
         scoreLabel={riskScoreLabel(score)}
       />
+      <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600" aria-live="polite">
+        {loading ? 'Consultando cierres diarios para el análisis de riesgo…' : error ?
+          <><p>{error}</p><button className="mt-2 font-semibold text-indigo-600" onClick={() => setRetry(value => value + 1)}>Intentar nuevamente</button></> :
+          <><p>{current?.observations} cierres diarios · {current?.start?.slice(0,10)} a {current?.end?.slice(0,10)} · {current?.provenance.source}</p><p className="mt-1">{current?.method}</p>{current?.warning && <p className="mt-2 text-amber-800">{current.warning}</p>}</>}
+      </div>
 
       <MetricStrip
         items={[
@@ -1421,12 +1506,12 @@ function RiskTab({
               <InlineRiskMetric
                 label="Volatilidad"
                 value={volatility != null ? `${volatility.toFixed(1)}%` : '—'}
-                description="Desviación anualizada aproximada de los retornos diarios del histórico cargado."
+                description="Calculada en el backend con cierres diarios, independientemente del rango del gráfico."
               />
               <InlineRiskMetric
                 label="Máximo drawdown"
                 value={drawdown != null ? `${drawdown.toFixed(1)}%` : '—'}
-                description="Mayor caída desde un máximo previo dentro del histórico cargado."
+                description="Mayor caída desde un máximo previo en el período diario indicado."
               />
             </div>
           }
@@ -1899,11 +1984,20 @@ function AiList({
 
 function SourceFooter({ stock, history }: { stock: Stock; history: HistoryResponse | null }) {
   return (
-    <section className="flex flex-col gap-2 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+    <section className="space-y-2 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500">
       <span className="flex items-center gap-1.5">
         <Info size={13} /> Datos del activo: {stock.source || 'Proveedor financiero'}
       </span>
       {history?.source && <span>Histórico: {history.source}</span>}
+      {stock.warning && <p role="status" className="text-amber-800">{stock.warning}</p>}
+      {history?.warning && <p className="text-amber-800">{history.warning}</p>}
+      <details><summary className="cursor-pointer font-semibold">Consultar fuentes y fechas</summary>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">{Object.entries(stock.provenance ?? {}).map(([key, value]) => <div key={key}>
+          <p className="font-medium">{key === 'quote' ? 'Cotización' : 'Fundamentales'} · {value.source || 'Sin fuente disponible'}</p>
+          <p>Fecha del dato: {value.data_timestamp ? (value.data_timestamp.length === 10 ? value.data_timestamp : new Date(value.data_timestamp).toLocaleString('es-CO')) : 'No informada por la fuente'}</p>
+          <p>Consultado: {value.retrieved_at ? new Date(value.retrieved_at).toLocaleString('es-CO') : 'Sin consulta disponible'}{value.stale ? ' · Dato guardado' : ''}</p>
+        </div>)}</div>
+      </details>
     </section>
   );
 }
@@ -1921,7 +2015,7 @@ function uniqueCriteria(criteria: Criterion[]) {
 
 function criterionNumber(criteria: Criterion[], needles: string[]) {
   const found = criteria.find((item) => {
-    const haystack = `${item.key} ${item.name}`.toLowerCase();
+    const haystack = `${item.key} ${item.name}`.toLowerCase().replace(/_/g, ' ');
     return needles.some((needle) => haystack.includes(needle));
   });
 
@@ -1942,7 +2036,7 @@ function metricFromCriterion(
   label: string
 ): ResearchMetric | null {
   const found = criteria.find((item) => {
-    const haystack = `${item.key} ${item.name}`.toLowerCase();
+    const haystack = `${item.key} ${item.name}`.toLowerCase().replace(/_/g, ' ');
     return needles.some((needle) => haystack.includes(needle));
   });
 
@@ -2004,120 +2098,22 @@ function filterFundamentalCriteria(
   criteria: Criterion[],
   section: 'growth' | 'profitability' | 'balance' | 'cashflow'
 ) {
-  const words: Record<'growth' | 'profitability' | 'balance' | 'cashflow', string[]> = {
-    growth: [
-      'revenue growth',
-      'earnings growth',
-      'crecimiento ingresos',
-      'crecimiento beneficios',
-      'crecimiento ganancias',
-      'revenue',
-      'ingresos',
-    ],
-    profitability: [
-      'roe',
-      'roa',
-      'return on equity',
-      'return on assets',
-      'operating margin',
-      'margen operativo',
-      'rentabilidad',
-    ],
-    balance: [
-      'debt',
-      'deuda',
-      'current ratio',
-      'liquidez',
-    ],
-    cashflow: [
-      'free cash flow',
-      'free cashflow',
-      'flujo de caja',
-      'fcf',
-    ],
+  const keys = {
+    growth: ['revenue_m', 'revenue_growth_pct', 'earnings_growth_pct'],
+    profitability: ['roe_pct', 'roa_pct', 'operating_margin_pct'],
+    balance: ['debt_to_equity', 'current_ratio'],
+    cashflow: ['free_cash_flow_m'],
   };
-
-  return criteria.filter((item) => {
-    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
-    return words[section].some((word) => haystack.includes(word));
-  });
+  return criteria.filter(item => keys[section].includes(item.key));
 }
 
-function filterRiskCriteria(
-  criteria: Criterion[],
-  section?: 'market' | 'financial'
-) {
-  const marketWords = [
-    'beta',
-    'riesgo',
-    'risk',
-    'volatil',
-    'free float',
-    'float',
-    'drawdown',
-    'short',
-  ];
-
-  const financialWords = [
-    'debt',
-    'deuda',
-    'current ratio',
-    'liquidez',
-    'free cash flow',
-    'flujo de caja',
-  ];
-
-  const words =
-    section === 'market'
-      ? marketWords
-      : section === 'financial'
-      ? financialWords
-      : [...marketWords, ...financialWords];
-
-  return criteria.filter((item) => {
-    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
-    return words.some((word) => haystack.includes(word));
-  });
+function filterRiskCriteria(criteria: Criterion[], section?: 'market' | 'financial') {
+  const marketKeys = ['beta', 'free_float_pct'];
+  const financialKeys = ['debt_to_equity', 'current_ratio', 'free_cash_flow_m'];
+  const keys = section === 'market' ? marketKeys : section === 'financial' ? financialKeys : [...marketKeys, ...financialKeys];
+  return criteria.filter(item => keys.includes(item.key));
 }
 
-function calculateMaxDrawdown(points: HistoryPoint[]) {
-  const closes = points
-    .map((point) => Number(point.close))
-    .filter((value) => Number.isFinite(value) && value > 0);
-
-  if (closes.length < 2) return null;
-
-  let peak = closes[0];
-  let maxDrawdown = 0;
-
-  for (const close of closes) {
-    if (close > peak) peak = close;
-    const drawdown = ((close - peak) / peak) * 100;
-    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
-  }
-
-  return maxDrawdown;
-}
-
-function calculateAnnualizedVolatility(points: HistoryPoint[]) {
-  const closes = points
-    .map((point) => Number(point.close))
-    .filter((value) => Number.isFinite(value) && value > 0);
-
-  if (closes.length < 3) return null;
-
-  const returns: number[] = [];
-  for (let i = 1; i < closes.length; i += 1) {
-    returns.push(Math.log(closes[i] / closes[i - 1]));
-  }
-
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const variance =
-    returns.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) /
-    Math.max(returns.length - 1, 1);
-
-  return Math.sqrt(variance) * Math.sqrt(252) * 100;
-}
 
 function groupCriteria(criteria: Criterion[]) {
   const groups = new Map<string, Criterion[]>();
@@ -2133,35 +2129,12 @@ function groupCriteria(criteria: Criterion[]) {
 }
 
 function filterValuationCriteria(criteria: Criterion[]) {
-  const words = [
-    'p/e',
-    'pe ',
-    'price',
-    'precio',
-    'target',
-    'objetivo',
-    'peg',
-    'p/s',
-    'p/b',
-    'ev/',
-    'ebitda',
-    'valoración',
-    'valuation',
-    'upside',
-    'potencial',
-    'market cap',
-    'capitalización',
-  ];
-
-  return criteria.filter((item) => {
-    const haystack = `${item.key} ${item.name} ${item.category}`.toLowerCase();
-    return words.some((word) => haystack.includes(word));
-  });
+  return criteria.filter(item => ['pe_ratio', 'upside_pct', 'market_cap_b'].includes(item.key));
 }
 
 function criterionValue(criteria: Criterion[], needles: string[]) {
   const found = criteria.find((item) => {
-    const haystack = `${item.key} ${item.name}`.toLowerCase();
+    const haystack = `${item.key} ${item.name}`.toLowerCase().replace(/_/g, ' ');
     return needles.some((needle) => haystack.includes(needle));
   });
 
